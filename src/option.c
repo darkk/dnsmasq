@@ -17,6 +17,7 @@
 /* define this to get facilitynames */
 #define SYSLOG_NAMES
 #include "dnsmasq.h"
+#include <sys/mman.h>
 #include <setjmp.h>
 
 static volatile int mem_recover = 0;
@@ -192,6 +193,8 @@ struct myoption {
 #define LOPT_NO_DHCP4      383
 #define LOPT_MAX_PROCS     384
 #define LOPT_DNSSEC_LIMITS 385
+#define LOPT_DNT_DUMP      386
+#define LOPT_DNT_LOOKUP    387
 
 #ifdef HAVE_GETOPT_LONG
 static const struct option opts[] =  
@@ -388,6 +391,8 @@ static const struct myoption opts[] =
     { "use-stale-cache", 2, 0 , LOPT_STALE_CACHE },
     { "no-ident", 0, 0, LOPT_NO_IDENT },
     { "max-tcp-connections", 1, 0, LOPT_MAX_PROCS },
+    { "dnt-dump", 1, 0, LOPT_DNT_DUMP },
+    { "dnt-lookup", 1, 0, LOPT_DNT_LOOKUP },
     { NULL, 0, 0, 0 }
   };
 
@@ -591,6 +596,8 @@ static struct {
   { LOPT_NO_IDENT, OPT_NO_IDENT, NULL, gettext_noop("Do not add CHAOS TXT records."), NULL },
   { LOPT_CACHE_RR, ARG_DUP, "<RR-type>", gettext_noop("Cache this DNS resource record type."), NULL },
   { LOPT_MAX_PROCS, ARG_ONE, "<integer>", gettext_noop("Maximum number of concurrent tcp connections."), NULL },
+  { LOPT_DNT_DUMP, ARG_ONE, "<path>", gettext_noop("Dump DNT file."), NULL },
+  { LOPT_DNT_LOOKUP, ARG_ONE, "<path>", gettext_noop("Lookup domains from STDIN in DNT file."), NULL },
   { 0, 0, NULL, NULL, NULL }
 }; 
 
@@ -3025,28 +3032,41 @@ static int one_opt(int option, char *arg, char *errstr, char *gen_err, int comma
 	/* split the domain args, if any and skip to the end of them. */
 	if (arg && *arg == '/')
 	  {
-	    char *last;
-
-	    domain = lastdomain = ++arg;
-	    
-	    while ((last = split_chr(arg, '/')))
+	    char *trailing_slash = strrchr(arg, '/');
+	    *trailing_slash = '\0';
+	    if (is_dnt(arg))
 	      {
-		lastdomain = arg;
-		arg = last;
+		*trailing_slash = '/';
+		flags = SERV_DNT;
+		domain = lastdomain = arg;
+		arg = split_chr(trailing_slash, '/');
+	      }
+	    else
+	      {
+		char *last;
+
+		*trailing_slash = '/';
+		domain = lastdomain = ++arg;
+		
+		while ((last = split_chr(arg, '/')))
+		  {
+		    lastdomain = arg;
+		    arg = last;
+		  }
 	      }
 	  }
 	
 	if (!arg || !*arg)
-	  flags = SERV_LITERAL_ADDRESS;
+	  flags |= SERV_LITERAL_ADDRESS;
 	else if (option == 'A')
 	  {
 	    /* # as literal address means return zero address for 4 and 6 */
 	    if (strcmp(arg, "#") == 0)
-	      flags = SERV_ALL_ZEROS | SERV_LITERAL_ADDRESS;
+	      flags |= SERV_ALL_ZEROS | SERV_LITERAL_ADDRESS;
 	    else if (inet_pton(AF_INET, arg, &addr.addr4) > 0)
-	      flags = SERV_4ADDR | SERV_LITERAL_ADDRESS;
+	      flags |= SERV_4ADDR | SERV_LITERAL_ADDRESS;
 	    else if (inet_pton(AF_INET6, arg, &addr.addr6) > 0)
-	      flags = SERV_6ADDR | SERV_LITERAL_ADDRESS;
+	      flags |= SERV_6ADDR | SERV_LITERAL_ADDRESS;
 	    else
 	      ret_err(_("Bad address in --address"));
 	  }
@@ -5899,7 +5919,7 @@ void read_opts(int argc, char **argv, char *compile_opts)
   
   /* See comment above make_servers(). Optimises server-read code. */
   mark_servers(0);
-  
+
   while (1) 
     {
 #ifdef HAVE_GETOPT_LONG
@@ -5972,6 +5992,34 @@ void read_opts(int argc, char **argv, char *compile_opts)
 	      one_file(extra, 0);
 	      free(extra);
 	    }
+	}
+      else if (option == LOPT_DNT_DUMP || option == LOPT_DNT_LOOKUP)
+	{
+	  int xd = dnt_open(arg);
+	  if (xd == -1)
+	    die(_("can't use DNT file %s"), arg, EC_FILE);
+	  if (option == LOPT_DNT_DUMP)
+	    {
+	      dnt_walk(xd, puts);
+	    }
+	  else
+	    {
+	      char domain[260]; // TODO: what's the correct size?
+	      while (fgets(domain, sizeof(domain), stdin))
+		{
+		  char *last = domain + strlen(domain) - 1; // FIXME: overflow on ""
+		  for (; last >= domain && isspace(*last); last--)
+		    *last = '\0';
+		  ssize_t l = strlen(domain);
+		  if (domain[0])
+		    {
+		      int r = dnt_find(xd, domain);
+		      printf("%s\t%d\t%s\n", domain, r, (0 <= r && r <= l) ? domain + l - r : "$" ); // FIXME: $
+		    }
+		}
+	    }
+	  dnt_close(xd);
+	  exit(0);
 	}
       else
 	{

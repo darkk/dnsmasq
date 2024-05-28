@@ -1692,16 +1692,17 @@ void check_servers(int no_loop_check)
        if (++count > SERVERS_LOGGED)
 	 continue;
        
+       const char *dnt = (serv->flags & SERV_DNT) ? "domains from " : "";
        if ((serv->flags & SERV_LITERAL_ADDRESS) &&
 	   !(serv->flags & (SERV_6ADDR | SERV_4ADDR | SERV_ALL_ZEROS)) &&
 	   strlen(server_domain(serv)))
 	 {
 	   count--;
 	   if (++locals <= LOCALS_LOGGED)
-	     my_syslog(LOG_INFO, _("using only locally-known addresses for %s"), server_domain(serv));
+	     my_syslog(LOG_INFO, _("using only locally-known addresses for %s%s"), dnt, server_domain(serv));
 	 }
        else if (serv->flags & SERV_USE_RESOLV)
-	 my_syslog(LOG_INFO, _("using standard nameservers for %s"), server_domain(serv));
+	 my_syslog(LOG_INFO, _("using standard nameservers for %s%s"), dnt, server_domain(serv));
     }
   
   if (locals > LOCALS_LOGGED)

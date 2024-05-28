@@ -558,6 +558,7 @@ union mysockaddr {
 #define SERV_HAS_SOURCE        32  /* source address defined */
 #define SERV_FOR_NODOTS        64  /* server for names with no domain part only */
 #define SERV_WARNED_RECURSIVE 128  /* avoid warning spam */
+#define SERV_DNT              256  /* domain is a path to DNT file to mmap() */
 #define SERV_MARK             512  /* for mark-and-delete and log code */
 #define SERV_WILDCARD        1024  /* domain has leading '*' */ 
 #define SERV_FROM_MASK     0x1800  /* two-bit encoding for conf, DBus, resolv, servers-file */
@@ -1922,3 +1923,12 @@ int add_update_server(int flags,
 		      const char *interface,
 		      const char *domain,
 		      union all_addr *local_addr); 
+
+/* dnt.c */
+int is_like_fs_path(const char *path);
+int is_dnt(const char *path);
+int dnt_open(const char *path);
+typedef int (*dnt_name_cb)(const char*);
+int dnt_walk(int xd, dnt_name_cb cb);
+int dnt_find(int xd, const char *domain);
+int dnt_close(int xd);

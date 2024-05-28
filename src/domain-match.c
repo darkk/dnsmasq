@@ -121,6 +121,23 @@ int lookup_domain(char *domain, int flags, int *lowout, int *highout)
   if (qlen == 0 || flags & F_DNSSECOK)
     nodots = 0;
 
+  for (nlow = 0; nlow < daemon->serverarraysz && (daemon->serverarray[nlow]->flags & SERV_DNT); nlow++)
+    {
+      int xd = daemon->serverarray[nlow]->domain_len ^ 0x8000;
+      int match = dnt_find(xd, qdomain);
+      if (match > 0)
+        {
+	  // FIXME: no, it's not correct code, but it's good enough for testing.
+	  if (lowout)
+	    *lowout = nlow;
+	  if (highout)
+	    *highout = nlow+1;
+	  return 1;
+	}
+    }
+  if (nlow == daemon->serverarraysz)
+    return 0;
+
   /* Search shorter and shorter RHS substrings for a match */
   while (qlen >= 0)
     {
@@ -488,6 +505,9 @@ static int order(char *qdomain, size_t qlen, struct server *serv)
      searched for name is never dotless. */
   if (serv->flags & SERV_FOR_NODOTS)
     return -1;
+  /* servers for DNT files are always the first. */
+  if (serv->flags & SERV_DNT)
+    return 1;
 
   dlen = serv->domain_len;
   
@@ -503,6 +523,16 @@ static int order(char *qdomain, size_t qlen, struct server *serv)
 static int order_servers(struct server *s1, struct server *s2)
 {
   int rc;
+
+  if ((s1->flags | s2->flags ) & SERV_DNT)
+    {
+      // DNT files are not domains, they're always sorted to top.
+      int f1 = !!(s1->flags & SERV_DNT);
+      int f2 = !!(s2->flags & SERV_DNT);
+      if (f1 && f2)
+	return strcmp(server_domain(s1), server_domain(s2));
+      return f2 - f1;
+    }
 
   /* need full comparison of dotless servers in 
      order_qsort() and filter_servers() */
@@ -632,7 +662,7 @@ struct server* server_alloc(int flags, const char *domain)
   const size_t servsz = server_sizeof(flags);
   struct server *ret = NULL;
 
-  if (*domain != 0)
+  if (*domain != 0 && !(flags & SERV_DNT))
     {
       char *alloc_domain = canonicalise((char *)domain, NULL);
       if (!alloc_domain)
@@ -668,9 +698,20 @@ int add_update_server(int flags,
 {
   struct server *serv = NULL;
   struct server *alloc_serv = NULL;
+  int xd = -1;
 
   if (domain && domain[0] == '*' && domain[1] != '\0')
     flags |= SERV_WILDCARD;
+  
+  if (flags & SERV_DNT)
+    {
+      xd = dnt_open(domain);
+      if (xd == -1)
+	{
+	  free(alloc_serv);
+	  return 0;
+	}
+    }
 
   alloc_serv = server_alloc(flags, domain);
   if (!alloc_serv)
@@ -704,6 +745,7 @@ int add_update_server(int flags,
 	for (serv = daemon->servers, up = &daemon->servers; serv; serv = tmp)
 	  {
 	    tmp = serv->next;
+	    // FIXME: hostname_isequal is wrong for SERV_DNT due to case-folding.
 	    if ((serv->flags & SERV_MARK) &&
 		hostname_isequal(server_domain(alloc_serv), server_domain(serv)))
 	      {
@@ -723,6 +765,7 @@ int add_update_server(int flags,
       
       if (serv)
 	{
+	  dnt_close(xd); // FIXME: is it correct? Does not look like that.
 	  free(alloc_serv);
 	  alloc_serv = NULL;
 	}
@@ -750,7 +793,7 @@ int add_update_server(int flags,
     }
     
   serv->flags = flags;
-  serv->domain_len = strlen(server_domain(serv));
+  serv->domain_len = (flags & SERV_DNT) ? (0x8000u | (unsigned int)xd) : strlen(server_domain(serv));
   
   return 1;
 }
