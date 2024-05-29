@@ -1742,7 +1742,7 @@ int reload_servers(char *fname)
       return 0;
     }
    
-  mark_servers(SERV_FROM_RESOLV);
+  mark_servers(SERV_FROM_X_RESOLV);
     
   while ((line = fgets(daemon->namebuff, MAXDNAME, f)))
     {
@@ -1797,7 +1797,7 @@ int reload_servers(char *fname)
 	    continue;
 	}
 
-      add_update_server(SERV_FROM_RESOLV, &addr, &source_addr, NULL, NULL, NULL);
+      add_update_server(SERV_FROM_X_RESOLV, &addr, &source_addr, NULL, NULL, NULL);
       gotone = 1;
     }
   
