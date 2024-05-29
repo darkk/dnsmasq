@@ -15,6 +15,7 @@
 */
 
 #include "dnsmasq.h"
+#include <assert.h>
 
 static int order(char *qdomain, size_t qlen, struct server *serv);
 static int order_qsort(const void *a, const void *b);
@@ -564,6 +565,7 @@ static int maybe_free_servers = 0;
 void mark_servers(int flag)
 {
   struct server *serv, *next, **up;
+  assert((flag & (~SERV_FROM_MASK)) == 0);
 
   maybe_free_servers = !!flag;
   
@@ -572,7 +574,7 @@ void mark_servers(int flag)
   /* mark everything with argument flag */
   for (serv = daemon->servers; serv; serv = serv->next)
     {
-      if (serv->flags & flag)
+      if (flag && (serv->flags & SERV_FROM_MASK) == flag)
 	serv->flags |= SERV_MARK;
       else
 	serv->flags &= ~SERV_MARK;
@@ -588,7 +590,7 @@ void mark_servers(int flag)
       {
 	next = serv->next;
 
-	if (serv->flags & flag)
+	if (flag && (serv->flags & SERV_FROM_MASK) == flag)
 	  {
 	    *up = next;
 	    free(serv->domain);
