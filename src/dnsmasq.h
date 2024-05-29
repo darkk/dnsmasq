@@ -559,14 +559,16 @@ union mysockaddr {
 #define SERV_HAS_SOURCE        32  /* source address defined */
 #define SERV_FOR_NODOTS        64  /* server for names with no domain part only */
 #define SERV_WARNED_RECURSIVE 128  /* avoid warning spam */
-#define SERV_FROM_DBUS        256  /* 1 if source is DBus */
 #define SERV_MARK             512  /* for mark-and-delete and log code */
 #define SERV_WILDCARD        1024  /* domain has leading '*' */ 
-#define SERV_FROM_RESOLV     2048  /* 1 for servers from resolv, 0 for command line. */
-#define SERV_FROM_FILE       4096  /* read from --servers-file */
+#define SERV_FROM_MASK     0x1800  /* two-bit encoding for conf, DBus, resolv, servers-file */
 #define SERV_LOOP            8192  /* server causes forwarding loop */
 #define SERV_DO_DNSSEC      16384  /* Validate DNSSEC when using this server */
 #define SERV_GOT_TCP        32768  /* Got some data from the TCP connection */
+
+#define SERV_FROM_X_RESOLV  0x800  /* set for servers from resolv */
+#define SERV_FROM_X_FILE   0x1000  /* read from --servers-file */
+#define SERV_FROM_X_DBUS   0x1800  /* set if source is DBus */
 
 struct serverfd {
   int fd;
