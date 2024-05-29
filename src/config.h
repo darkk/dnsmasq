@@ -13,6 +13,7 @@
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
+#define HAVE_DEVTOOLS 1 /* as OpenWRT sdk kinda ignores COPTS */
 
 #define FTABSIZ 150 /* max number of outstanding requests (default) */
 #define MAX_PROCS 20 /* default max no children for TCP requests */
@@ -366,12 +367,21 @@ HAVE_SOCKADDR_SA_LEN
 #define HAVE_INOTIFY
 #endif
 
+#ifdef HAVE_DEVTOOLS
+# define DEVTOOLS 1
+#else
+# define DEVTOOLS 0
+#endif
+
 /* Define a string indicating which options are in use.
    DNSMASQ_COMPILE_OPTS is only defined in dnsmasq.c */
 
 #ifdef DNSMASQ_COMPILE_OPTS
 
 static char *compile_opts = 
+#ifdef HAVE_DEVTOOLS
+"devtools "
+#endif
 "IPv6 "
 #ifndef HAVE_GETOPT_LONG
 "no-"
