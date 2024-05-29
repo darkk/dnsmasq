@@ -24,6 +24,7 @@ MANDIR        = $(PREFIX)/share/man
 LOCALEDIR     = $(PREFIX)/share/locale
 BUILDDIR      = $(SRC)
 DESTDIR       = 
+#CFLAGS        = -Wall -W -O0 -g
 CFLAGS        = -Wall -W -O2
 LDFLAGS       = 
 COPTS         = 
