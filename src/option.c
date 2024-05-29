@@ -1135,7 +1135,7 @@ static char *domain_rev4(int from_file, char *server, struct in_addr *addr4, int
     return string;
   
   if (from_file)
-    flags |= SERV_FROM_FILE;
+    flags |= SERV_FROM_X_FILE;
  
   rem = size & 0x7;
   addrbytes = (32 - size) >> 3;
@@ -1221,7 +1221,7 @@ static char *domain_rev6(int from_file, char *server, struct in6_addr *addr6, in
     return string;
 
   if (from_file)
-    flags |= SERV_FROM_FILE;
+    flags |= SERV_FROM_X_FILE;
   
   rem = size & 0x3;
   addrbytes = (128 - size) >> 3;
@@ -3057,7 +3057,7 @@ static int one_opt(int option, char *arg, char *errstr, char *gen_err, int comma
 	  }
 
 	if (servers_only && option == 'S')
-	  flags |= SERV_FROM_FILE;
+	  flags |= SERV_FROM_X_FILE;
 
 	cur_domain = domain;
 	while ((flags & SERV_LITERAL_ADDRESS) || parse_server_next(&sdetails))
@@ -5753,7 +5753,7 @@ void read_servers_file(void)
        return;
     }
   
-  mark_servers(SERV_FROM_FILE);
+  mark_servers(SERV_FROM_X_FILE);
   read_file(daemon->servers_file, f, LOPT_REV_SERV, 0);
   fclose(f);
   cleanup_servers();
