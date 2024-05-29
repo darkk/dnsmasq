@@ -13,6 +13,7 @@
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
+#define HAVE_DEVTOOLS 1 /* as OpenWRT sdk kinda ignores COPTS */
 
 #define FTABSIZ 150 /* max number of outstanding requests (default) */
 #define MAX_PROCS 20 /* default max no children for TCP requests */
