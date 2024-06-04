@@ -21,9 +21,6 @@ static int order(char *qdomain, size_t qlen, struct server *serv);
 static int order_qsort(const void *a, const void *b);
 static int order_servers(struct server *s, struct server *s2);
 
-/* If the server is USE_RESOLV or LITERAL_ADDRES, it lives on the local_domains chain. */
-#define SERV_IS_LOCAL (SERV_USE_RESOLV | SERV_LITERAL_ADDRESS)
-
 bench_wrap4(BENCH_BUILD_SERVER_ARRAY, build_server_array, (), (void))
 void bench_mangle(build_server_array) (void)
 {
@@ -502,7 +499,7 @@ static int order(char *qdomain, size_t qlen, struct server *serv)
   if (qlen > dlen)
     return -1;
 
-  return hostname_order(qdomain, serv->domain);
+  return hostname_order(qdomain, server_domain(serv));
 }
 
 static int order_servers(struct server *s1, struct server *s2)
@@ -516,7 +513,7 @@ static int order_servers(struct server *s1, struct server *s2)
   if (s1->flags & SERV_FOR_NODOTS)
      return (s2->flags & SERV_FOR_NODOTS) ? 0 : 1;
    
-  if ((rc = order(s1->domain, s1->domain_len, s2)) != 0)
+  if ((rc = order(server_domain(s1), s1->domain_len, s2)) != 0)
     return rc;
 
   /* For identical domains, sort wildcard ones first */
@@ -593,7 +590,7 @@ void mark_servers(int flag)
 	if (flag && (serv->flags & SERV_FROM_MASK) == flag)
 	  {
 	    *up = next;
-	    free(serv->domain);
+	    // free(serv->domain);
 	    free(serv);
 	  }
 	else 
@@ -613,7 +610,7 @@ void cleanup_servers(void)
        {
          server_gone(serv);
          *up = serv->next;
-	 free(serv->domain);
+	 // free(serv->domain);
 	 free(serv);
        }
       else 
@@ -624,6 +621,48 @@ void cleanup_servers(void)
     }
 }
 
+static struct server* server_alloc(u16 flags, const char *domain)
+{
+  if (!domain)
+    domain = "";
+
+  /* .domain == domain, for historical reasons. */
+  if (*domain == '.')
+    while (*domain == '.') domain++;
+  else if (*domain == '*')
+    domain++;
+
+  const size_t servsz = server_sizeof(flags);
+  struct server *ret = NULL;
+
+  if (*domain != 0)
+    {
+      char *alloc_domain = canonicalise((char *)domain, NULL);
+      if (!alloc_domain)
+	return NULL;
+      const size_t domsz = strlen(alloc_domain) + 1;
+      ret = whine_realloc(alloc_domain, servsz + domsz);
+      if (!ret)
+        {
+	  free(alloc_domain);
+	  return NULL;
+        }
+      memmove(((char*)ret) + servsz, ret, domsz);
+      memset(ret, 0, servsz);
+      ret->flags = flags;
+    }
+  else
+    {
+      const size_t domsz = strlen(domain) + 1;
+      ret = whine_malloc(servsz + domsz);
+      if (!ret)
+	return NULL;
+      ret->flags = flags;
+      memcpy(server_domain(ret), domain, domsz);
+    }
+  return ret;
+}
+
 int add_update_server(int flags,
 		      union mysockaddr *addr,
 		      union mysockaddr *source_addr,
@@ -632,46 +671,21 @@ int add_update_server(int flags,
 		      union all_addr *local_addr)
 {
   struct server *serv = NULL;
-  char *alloc_domain;
-  
-  if (!domain)
-    domain = "";
+  struct server *alloc_serv = NULL;
 
-  /* .domain == domain, for historical reasons. */
-  if (*domain == '.')
-    while (*domain == '.') domain++;
-  else if (*domain == '*')
-    {
-      domain++;
-      if (*domain != 0)
-	flags |= SERV_WILDCARD;
-    }
-  
-  if (*domain == 0)
-    alloc_domain = whine_malloc(1);
-  else
-    alloc_domain = canonicalise((char *)domain, NULL);
+  if (domain && domain[0] == '*' && domain[1] != '\0')
+    flags |= SERV_WILDCARD;
 
-  if (!alloc_domain)
+  alloc_serv = server_alloc(flags, domain);
+  if (!alloc_serv)
     return 0;
 
+  // NB: `domain` is not modified.
+  // server_domain(alloc_serv) == alloc_domain
+  
   if (flags & SERV_IS_LOCAL)
     {
-      size_t size;
-      
-      if (flags & SERV_6ADDR)
-	size = sizeof(struct serv_addr6);
-      else if (flags & SERV_4ADDR)
-	size = sizeof(struct serv_addr4);
-      else
-	size = sizeof(struct serv_local);
-      
-      if (!(serv = whine_malloc(size)))
-	{
-	  free(alloc_domain);
-	  return 0;
-	}
-      
+      serv = alloc_serv;
       serv->next = daemon->local_domains;
       daemon->local_domains = serv;
       
@@ -695,7 +709,7 @@ int add_update_server(int flags,
 	  {
 	    tmp = serv->next;
 	    if ((serv->flags & SERV_MARK) &&
-		hostname_isequal(alloc_domain, serv->domain))
+		hostname_isequal(server_domain(alloc_serv), server_domain(serv)))
 	      {
 		/* Need to move down? */
 		if (serv->next)
@@ -713,19 +727,12 @@ int add_update_server(int flags,
       
       if (serv)
 	{
-	  free(alloc_domain);
-	  alloc_domain = serv->domain;
+	  free(alloc_serv);
+	  alloc_serv = NULL;
 	}
       else
 	{
-	  if (!(serv = whine_malloc(sizeof(struct server))))
-	    {
-	      free(alloc_domain);
-	      return 0;
-	    }
-	  
-	  memset(serv, 0, sizeof(struct server));
-	  
+	  serv = alloc_serv;
 	  /* Add to the end of the chain, for order */
 	  if (daemon->servers_tail)
 	    daemon->servers_tail->next = serv;
@@ -747,8 +754,7 @@ int add_update_server(int flags,
     }
     
   serv->flags = flags;
-  serv->domain = alloc_domain;
-  serv->domain_len = strlen(alloc_domain);
+  serv->domain_len = strlen(server_domain(serv));
   
   return 1;
 }
