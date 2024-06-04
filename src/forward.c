@@ -2917,7 +2917,7 @@ static struct frec *get_new_frec(time_t now, struct server *master, int force)
 
   if (!force && count >= daemon->ftabsize)
     {
-      query_full(now, master->domain);
+      query_full(now, server_domain(master));
       return NULL;
     }
   
