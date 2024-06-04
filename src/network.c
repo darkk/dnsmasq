@@ -1599,10 +1599,10 @@ void check_servers(int no_loop_check)
 	  
 	  /* Disable DNSSEC validation when using server=/domain/.... servers
 	     unless there's a configured trust anchor. */
-	  if (strlen(serv->domain) != 0)
+	  if (strlen(server_domain(serv)) != 0)
 	    {
 	      struct ds_config *ds;
-	      char *domain = serv->domain;
+	      char *domain = server_domain(serv);
 	      
 	      /* .example.com is valid */
 	      while (*domain == '.')
@@ -1659,7 +1659,7 @@ void check_servers(int no_loop_check)
       if (++count > SERVERS_LOGGED)
 	continue;
       
-      if (strlen(serv->domain) != 0 || (serv->flags & SERV_FOR_NODOTS))
+      if (strlen(server_domain(serv)) != 0 || (serv->flags & SERV_FOR_NODOTS))
 	{
 	  char *s1, *s2, *s3 = "", *s4 = "";
 
@@ -1669,10 +1669,10 @@ void check_servers(int no_loop_check)
 #endif
 	  if (serv->flags & SERV_FOR_NODOTS)
 	    s1 = _("unqualified"), s2 = _("names");
-	  else if (strlen(serv->domain) == 0)
+	  else if (strlen(server_domain(serv)) == 0)
 	    s1 = _("default"), s2 = "";
 	  else
-	    s1 = _("domain"), s2 = serv->domain, s4 = (serv->flags & SERV_WILDCARD) ? "*" : "";
+	    s1 = _("domain"), s2 = server_domain(serv), s4 = (serv->flags & SERV_WILDCARD) ? "*" : "";
 	  
 	  my_syslog(LOG_INFO, _("using nameserver %s#%d for %s %s%s %s"), daemon->namebuff, port, s1, s4, s2, s3);
 	}
@@ -1694,14 +1694,14 @@ void check_servers(int no_loop_check)
        
        if ((serv->flags & SERV_LITERAL_ADDRESS) &&
 	   !(serv->flags & (SERV_6ADDR | SERV_4ADDR | SERV_ALL_ZEROS)) &&
-	   strlen(serv->domain))
+	   strlen(server_domain(serv)))
 	 {
 	   count--;
 	   if (++locals <= LOCALS_LOGGED)
-	     my_syslog(LOG_INFO, _("using only locally-known addresses for %s"), serv->domain);
+	     my_syslog(LOG_INFO, _("using only locally-known addresses for %s"), server_domain(serv));
 	 }
        else if (serv->flags & SERV_USE_RESOLV)
-	 my_syslog(LOG_INFO, _("using standard nameservers for %s"), serv->domain);
+	 my_syslog(LOG_INFO, _("using standard nameservers for %s"), server_domain(serv));
     }
   
   if (locals > LOCALS_LOGGED)
