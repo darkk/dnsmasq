@@ -570,6 +570,9 @@ union mysockaddr {
 #define SERV_FROM_X_FILE   0x1000  /* read from --servers-file */
 #define SERV_FROM_X_DBUS   0x1800  /* set if source is DBus */
 
+/* If the server is USE_RESOLV or LITERAL_ADDRES, it lives on the local_domains chain. */
+#define SERV_IS_LOCAL (SERV_USE_RESOLV | SERV_LITERAL_ADDRESS)
+
 struct serverfd {
   int fd;
   union mysockaddr source_addr;
@@ -592,7 +595,6 @@ struct randfd_list {
 
 struct server {
   u16 flags, domain_len;
-  char *domain;
   struct server *next;
   int serial, arrayposn;
   int last_server;
@@ -609,28 +611,44 @@ struct server {
 #ifdef HAVE_LOOP
   u32 uid;
 #endif
+  /* char domain[]; */
 };
 
-/* First four fields must match struct server in next three definitions.. */
+/* First three fields must match struct server in next three definitions.. */
 struct serv_addr4 {
   u16 flags, domain_len;
-  char *domain;
   struct server *next;
   struct in_addr addr;
+  /* char domain[]; */
 };
 
 struct serv_addr6 {
   u16 flags, domain_len;
-  char *domain;
   struct server *next;
   struct in6_addr addr;
+  /* char domain[]; */
 };
 
 struct serv_local {
   u16 flags, domain_len;
-  char *domain;
   struct server *next;
+  /* char domain[]; */
 };
+
+static inline size_t server_sizeof(u16 flags) {
+  return
+    (flags & SERV_IS_LOCAL) == 0
+    ? sizeof(struct server)
+    : (flags & SERV_6ADDR)
+    ? sizeof(struct serv_addr6)
+    : (flags & SERV_4ADDR)
+    ? sizeof(struct serv_addr4)
+    : sizeof(struct serv_local);
+}
+
+static inline char* server_domain(struct server *s) {
+   return ((char*)s) + server_sizeof(s->flags);
+}
 
 struct rebind_domain {
   char *domain;
