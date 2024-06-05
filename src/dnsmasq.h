@@ -611,7 +611,7 @@ struct server {
 #ifdef HAVE_LOOP
   u32 uid;
 #endif
-  /* char domain[]; */
+  char domain[];
 };
 
 /* First three fields must match struct server in next three definitions.. */
@@ -619,23 +619,24 @@ struct serv_addr4 {
   struct server *next;
   u16 flags, domain_len;
   struct in_addr addr;
-  /* char domain[]; */
+  char domain[];
 };
 
 struct serv_addr6 {
   struct server *next;
   u16 flags, domain_len;
   struct in6_addr addr;
-  /* char domain[]; */
+  char domain[];
 };
 
 struct serv_local {
   struct server *next;
   u16 flags, domain_len;
-  /* char domain[]; */
+  char domain[];
 };
 
-static inline size_t server_sizeof(u16 flags) {
+static inline size_t server_sizeof(u16 flags)
+{
   return
     (flags & SERV_IS_LOCAL) == 0
     ? sizeof(struct server)
@@ -646,8 +647,20 @@ static inline size_t server_sizeof(u16 flags) {
     : sizeof(struct serv_local);
 }
 
+static inline size_t server_offsetof_domain(u16 flags)
+{
+  return
+    (flags & SERV_IS_LOCAL) == 0
+    ? offsetof(struct server, domain)
+    : (flags & SERV_6ADDR)
+    ? offsetof(struct serv_addr6, domain)
+    : (flags & SERV_4ADDR)
+    ? offsetof(struct serv_addr4, domain)
+    : offsetof(struct serv_local, domain);
+}
+
 static inline char* server_domain(struct server *s) {
-   return ((char*)s) + server_sizeof(s->flags);
+   return ((char*)s) + server_offsetof_domain(s->flags);
 }
 
 struct rebind_domain {
