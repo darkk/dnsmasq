@@ -621,6 +621,11 @@ void cleanup_servers(void)
     }
 }
 
+static inline size_t max_size(size_t a, size_t b)
+{
+  return (a > b) ? a : b;
+}
+
 static struct server* server_alloc(u16 flags, const char *domain)
 {
   if (!domain)
@@ -633,6 +638,7 @@ static struct server* server_alloc(u16 flags, const char *domain)
     domain++;
 
   const size_t servsz = server_sizeof(flags);
+  const size_t domoff = server_offsetof_domain(flags);
   struct server *ret = NULL;
 
   if (*domain != 0)
@@ -641,20 +647,22 @@ static struct server* server_alloc(u16 flags, const char *domain)
       if (!alloc_domain)
 	return NULL;
       const size_t domsz = strlen(alloc_domain) + 1;
-      ret = whine_realloc(alloc_domain, servsz + domsz);
+      const size_t total = max_size(domoff + domsz, servsz);
+      ret = whine_realloc(alloc_domain, total);
       if (!ret)
         {
 	  free(alloc_domain);
 	  return NULL;
         }
-      memmove(((char*)ret) + servsz, ret, domsz);
-      memset(ret, 0, servsz);
+      memmove(((char*)ret) + domoff, ret, domsz); /* server_domain needs ->flags */
+      memset(ret, 0, domoff);
       ret->flags = flags;
     }
   else
     {
       const size_t domsz = strlen(domain) + 1;
-      ret = whine_malloc(servsz + domsz);
+      const size_t total = max_size(domoff + domsz, servsz);
+      ret = whine_malloc(total);
       if (!ret)
 	return NULL;
       ret->flags = flags;
