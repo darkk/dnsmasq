@@ -594,8 +594,8 @@ struct randfd_list {
 
 
 struct server {
-  u16 flags, domain_len;
   struct server *next;
+  u16 flags, domain_len;
   int serial, arrayposn;
   int last_server;
   union mysockaddr addr, source_addr;
@@ -616,22 +616,22 @@ struct server {
 
 /* First three fields must match struct server in next three definitions.. */
 struct serv_addr4 {
-  u16 flags, domain_len;
   struct server *next;
+  u16 flags, domain_len;
   struct in_addr addr;
   /* char domain[]; */
 };
 
 struct serv_addr6 {
-  u16 flags, domain_len;
   struct server *next;
+  u16 flags, domain_len;
   struct in6_addr addr;
   /* char domain[]; */
 };
 
 struct serv_local {
-  u16 flags, domain_len;
   struct server *next;
+  u16 flags, domain_len;
   /* char domain[]; */
 };
 
