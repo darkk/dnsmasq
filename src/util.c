@@ -37,6 +37,9 @@
 #ifdef HAVE_DEVTOOLS
 #include <math.h>
 #endif
+#include <assert.h>
+
+static void bp_init();
 
 /* SURF random number generator */
 
@@ -55,6 +58,8 @@ void rand_init()
     die(_("failed to seed the random number generator: %s"), NULL, EC_MISC);
   
   close(fd);
+
+  bp_init();
 }
 
 #define ROTATE(x,b) (((x) << (b)) | ((x) >> (32 - (b))))
@@ -101,6 +106,22 @@ u64 rand64(void)
     surf();
   outleft -= 2;
   return (u64)out[outleft+1] + (((u64)out[outleft]) << 32);
+}
+
+void bp_init()
+{
+  bpd_init();
+}
+
+uintptr_t bp_hash(const char *s)
+{
+  return bpdldhhs(s);
+}
+
+uintptr_t bp_memhash(const void *m, size_t len)
+{
+  abort(); // TOOD: not implemented
+  return bpdbinhm(m, len);
 }
 
 int rr_on_list(struct rrlist *list, unsigned short rr)

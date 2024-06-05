@@ -167,6 +167,9 @@ extern int capget(cap_user_header_t header, cap_user_data_t data);
 /* daemon is function in the C library.... */
 #define daemon dnsmasq_daemon
 
+#define BPD_PTROPS_SOURCE 1
+#include "bpdhash.h"
+
 #define ADDRSTRLEN INET6_ADDRSTRLEN
 
 /* Async event queue */
@@ -667,7 +670,7 @@ static inline char* server_domain(struct server *s) {
    return ((char*)s) + server_offsetof_domain(s->flags);
 }
 
-static inline int server_domain_empty(const struct server *s) {
+static inline int server_domain_empty(struct server *s) {
   return server_domain(s)[0] == '\0';
 }
 
@@ -1406,6 +1409,9 @@ char *cache_get_cname_target(struct crec *crecp);
 struct crec *cache_enumerate(int init);
 int read_hostsfile(char *filename, unsigned int index, int cache_size, 
 		   struct crec **rhash, int hashsz);
+#ifdef HAVE_DEVTOOLS
+unsigned int cache_hash_uint(char *name);
+#endif
 
 /* blockdata.c */
 void blockdata_init(void);
@@ -1497,6 +1503,13 @@ void rand_init(void);
 unsigned short rand16(void);
 u32 rand32(void);
 u64 rand64(void);
+#if PTRBITS == 32
+static inline uintptr_t randptr(void) { return rand32(); }
+#elif PTRBITS == 64
+static inline uintptr_t randptr(void) { return rand64(); }
+#endif
+uintptr_t bp_hash(const char *name);
+uintptr_t bp_memhash(const void *name, size_t n);
 int rr_on_list(struct rrlist *list, unsigned short rr);
 int legal_hostname(char *name);
 char *canonicalise(char *in, int *nomem);
@@ -1515,6 +1528,7 @@ int hostname_issubdomain(char *a, char *b);
 time_t dnsmasq_time(void);
 u32 dnsmasq_milliseconds(void);
 enum bench_metrics {
+  BENCH_OPT_DBG_HASH,
   BENCH_DNSMASQ_TIME,
   BENCH_BUILD_SERVER_ARRAY,
   BENCH_EXTRACT_REQUEST,

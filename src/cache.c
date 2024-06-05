@@ -222,8 +222,11 @@ static void rehash(int size)
       free(old);
     }
 }
-  
-static struct crec **hash_bucket(char *name)
+
+#ifndef HAVE_DEVTOOLS
+static inline
+#endif
+unsigned int cache_hash_uint(char *name)
 {
   unsigned int c, val = 017465; /* Barker code - minimum self-correlation in cyclic shift */
   const unsigned char *mix_tab = (const unsigned char*)typestr; 
@@ -235,9 +238,15 @@ static struct crec **hash_bucket(char *name)
 	c += 'a' - 'A';
       val = ((val << 7) | (val >> (32 - 7))) + (mix_tab[(val + c) & 0x3F] ^ c);
     } 
-  
+  val ^= (val >> 16);
+  return val;
+}
+
+static struct crec **hash_bucket(char *name)
+{
+  unsigned int val = cache_hash_uint(name);
   /* hash_size is a power of two */
-  return hash_table + ((val ^ (val >> 16)) & (hash_size - 1));
+  return hash_table + (val & (hash_size - 1));
 }
 
 static void cache_hash(struct crec *crecp)
