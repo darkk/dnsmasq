@@ -70,6 +70,7 @@ typedef unsigned short u16;
 typedef unsigned int u32;
 typedef unsigned long long u64;
 
+#define container_of(ptr, type, member) ((type *)((void *)(ptr) - offsetof(type, member)))
 #define countof(x)      (long)(sizeof(x) / sizeof(x[0]))
 #define MIN(a,b)        ((a) < (b) ? (a) : (b))
 #define MAX(a,b)        ((a) > (b) ? (a) : (b))
@@ -107,6 +108,7 @@ typedef unsigned long long u64;
 #  define ifr_mtu  ifr_ifru.ifru_metric
 #endif
 #include <unistd.h>
+#include <assert.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
@@ -169,6 +171,74 @@ extern int capget(cap_user_header_t header, cap_user_data_t data);
 
 #define BPD_PTROPS_SOURCE 1
 #include "bpdhash.h"
+
+// Generic __builtin_popcountg is clang-19+ and gcc-14+. OpenWRT 23.x SDK is using gcc-12.
+#if UINTPTR_MAX == UINT_MAX
+#  define builtin_clz_ptr __builtin_clz
+#  define builtin_ctz_ptr __builtin_ctz
+#elif UINTPTR_MAX == ULONG_MAX
+#  define builtin_clz_ptr __builtin_clzl
+#  define builtin_ctz_ptr __builtin_ctzl
+#elif UINTPTR_MAX == ULLONG_MAX
+#  define builtin_clz_ptr __builtin_clzll
+#  define builtin_ctz_ptr __builtin_ctzll
+#endif
+
+#if defined __has_builtin && __has_builtin(__builtin_clzg)
+inline static int clzptr(uintptr_t p) { return __builtin_clzg(p, PTRBITS); }
+#elif defined __has_builtin && __has_builtin(builtin_clz_ptr)
+inline static int clzptr(uintptr_t p) { return p ? builtin_clz_ptr(p) : PTRBITS; }
+#else
+// That's clz3() from https://en.wikipedia.org/wiki/Find_first_set#CLZ
+inline static int clz32(u32 x)
+{
+  if (!x) return 32;
+  int n = 0;
+  if (!(x & 0xFFFF0000U)) { n += 16; x <<= 16; }
+  if (!(x & 0xFF000000U)) { n += 8; x <<= 8; }
+  if (!(x & 0xF0000000U)) { n += 4; x <<= 4; }
+  if (!(x & 0xC0000000U)) { n += 2; x <<= 2; }
+  if (!(x & 0x80000000U)) { n++; }
+  return n;
+}
+inline static int clzptr(uintptr_t p)
+{
+# if PTRBITS == 64
+  const int hi = clz32(p >> 32);
+  return (hi == 32) ? (32 + clz32(p & 0xFFFFFFFF)) : hi;
+# elif PTRBITS == 32
+  return clz32(p);
+# endif
+}
+#endif // __has_builtin(builtin_clz_ptr)
+
+#if defined __has_builtin && __has_builtin(__builtin_ctzg)
+inline static int ctzptr(uintptr_t p) { return __builtin_ctzg(p, PTRBITS); }
+#elif defined __has_builtin && __has_builtin(builtin_ctz_ptr)
+inline static int ctzptr(uintptr_t p) { return p ? builtin_ctz_ptr(p) : PTRBITS; }
+#else
+// That's ctz3() from https://en.wikipedia.org/wiki/Find_first_set#CTZ
+inline static int ctz32(u32 x)
+{
+  if (!x) return 32;
+  int n = 0;
+  if (!(x & 0x0000FFFF)) { n += 16; x >>= 16; }
+  if (!(x & 0x000000FF)) { n += 8; x >>= 8; }
+  if (!(x & 0x0000000F)) { n += 4; x >>= 4; }
+  if (!(x & 0x00000003)) { n += 2; x >>= 2; }
+  if (!(x & 0x00000001)) { n ++; }
+  return n;
+}
+inline static int ctzptr(uintptr_t p)
+{
+# if PTRBITS == 64
+  const int hi = ctz32(p >> 32);
+  return (hi == 32) ? (32 + ctz32(p & 0xFFFFFFFF)) : hi;
+# elif PTRBITS == 32
+  return ctz32(p);
+# endif
+}
+#endif // __has_builtin(builtin_ctz_ptr)
 
 #define ADDRSTRLEN INET6_ADDRSTRLEN
 
@@ -599,10 +669,22 @@ struct randfd_list {
   struct randfd_list *next;
 };
 
+struct worm_bsearch {
+  uintptr_t ptrxor;
+  uintptr_t keymask;
+  u8 partbits;     // bits of hash() used to pick partition
+  u8 ptrwrotr;     // rotr(ptr ^ ptrxor, ptrrotr) has at least ${keybits} leading zeros
+  uintptr_t tabluint[];
+};
 
 struct server {
-  struct server *next;
-  u16 flags, domain_len;
+  union {
+    struct server *next;
+    uintptr_t hash4qsort;
+  };
+  // FIXME: kill domain_len as a separate bit
+  u16 flags, domain_len, domhash16;
+  // FIXME: arrayposn is to be changed
   int serial, arrayposn;
   int last_server;
   union mysockaddr addr, source_addr;
@@ -623,28 +705,38 @@ struct server {
 
 /* First three fields must match struct server in next three definitions.. */
 struct serv_addr4 {
-  struct server *next;
-  u16 flags, domain_len;
+  union {
+    struct server *next;
+    uintptr_t hash4qsort;
+  };
+  u16 flags, domain_len, domhash16;
   struct in_addr addr;
   char domain[];
 };
 
 struct serv_addr6 {
-  struct server *next;
-  u16 flags, domain_len;
+  union {
+    struct server *next;
+    uintptr_t hash4qsort;
+  };
+  u16 flags, domain_len, domhash16;
   struct in6_addr addr;
   char domain[];
 };
 
 struct serv_local {
-  struct server *next;
-  u16 flags, domain_len;
+  union {
+    struct server *next;
+    uintptr_t hash4qsort;
+  };
+  u16 flags, domain_len, domhash16;
   char domain[];
 };
 
 static inline size_t server_sizeof(u16 flags)
 {
   return
+    // TODO: does USE_RESOLV really need full structure?... It it my bug or a legacy one?
     (flags & SERV_IS_LOCAL) == 0
     ? sizeof(struct server)
     : ((flags & SERV_ADDR_MASK) == SERV_X_6ADDR)
@@ -666,8 +758,8 @@ static inline size_t server_offsetof_domain(u16 flags)
     : offsetof(struct serv_local, domain);
 }
 
-static inline char* server_domain(struct server *s) {
-   return ((char*)s) + server_offsetof_domain(s->flags);
+static inline /* const */ char* server_domain(const struct server *s) {
+   return ((/* const */ char*)s) + server_offsetof_domain(s->flags);
 }
 
 static inline int server_domain_empty(struct server *s) {
@@ -1219,10 +1311,11 @@ extern struct daemon {
   char *lease_change_command;
   struct iname *if_names, *if_addrs, *if_except, *dhcp_except, *auth_peers, *tftp_interfaces;
   struct bogus_addr *bogus_addr, *ignore_addr;
-  struct server *servers, *servers_tail, *local_domains, **serverarray;
+  struct server *servers, *servers_tail, *local_domains, **serverarray /* MARK */;
   struct rebind_domain *no_rebind;
   int server_has_wildcard;
-  int serverarraysz, serverarrayhwm;
+  int serverarraysz;
+  struct worm_bsearch *serverhash;
   struct ipsets *ipsets, *nftsets;
   u32 allowlist_mask;
   struct allowlist *allowlists;
@@ -1499,6 +1592,7 @@ char *algo_digest_name(int algo);
 char *nsec3_digest_name(int digest);
 
 /* util.c */
+static inline size_t max_size(size_t a, size_t b) { return (a > b) ? a : b; }
 void rand_init(void);
 unsigned short rand16(void);
 u32 rand32(void);
@@ -1510,6 +1604,18 @@ static inline uintptr_t randptr(void) { return rand64(); }
 #endif
 uintptr_t bp_hash(const char *name);
 uintptr_t bp_memhash(const void *name, size_t n);
+struct worm_bsearch* wormb_alloc(int partbits, size_t nmemb);
+static inline size_t wormb_npart(struct worm_bsearch *w) { return (size_t)1u << w->partbits; }
+static inline uintptr_t* wormb_data_begin(struct worm_bsearch *w) { return w->tabluint + wormb_npart(w); }
+static inline uintptr_t* wormb_data_end(struct worm_bsearch *w) { return (uintptr_t*)w->tabluint[wormb_npart(w) - 1]; }
+static inline uintptr_t* wormb_part_begin(struct worm_bsearch *w, unsigned int partition) {
+  assert(partition < wormb_npart(w));
+  return partition ? (uintptr_t*)w->tabluint[partition - 1] : wormb_data_begin(w);
+}
+static inline uintptr_t* wormb_part_end(struct worm_bsearch *w, unsigned int partition) {
+  assert(partition < wormb_npart(w));
+  return (uintptr_t*)w->tabluint[partition];
+}
 int rr_on_list(struct rrlist *list, unsigned short rr);
 int legal_hostname(char *name);
 char *canonicalise(char *in, int *nomem);

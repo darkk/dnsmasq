@@ -37,7 +37,6 @@
 #ifdef HAVE_DEVTOOLS
 #include <math.h>
 #endif
-#include <assert.h>
 
 static void bp_init();
 
@@ -122,6 +121,21 @@ uintptr_t bp_memhash(const void *m, size_t len)
 {
   abort(); // TOOD: not implemented
   return bpdbinhm(m, len);
+}
+
+struct worm_bsearch* wormb_alloc(int partbits, size_t nmemb)
+{
+  assert(0 <= partbits && partbits < PTRBITS);
+  const size_t sz = max_size(
+      sizeof(struct worm_bsearch),
+      offsetof(struct worm_bsearch, tabluint) + sizeof(void*) * (nmemb + (1u << partbits)));
+  struct worm_bsearch * const ret = whine_malloc(sz);
+  if (ret)
+    {
+      ret->partbits = partbits;
+      ret->tabluint[wormb_npart(ret) - 1] = (uintptr_t)(ret->tabluint + wormb_npart(ret) + nmemb);
+    }
+  return ret;
 }
 
 int rr_on_list(struct rrlist *list, unsigned short rr)
