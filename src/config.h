@@ -376,6 +376,12 @@ HAVE_SOCKADDR_SA_LEN
 /* Define a string indicating which options are in use.
    DNSMASQ_COMPILE_OPTS is only defined in dnsmasq.c */
 
+#if defined(HAVE_DEVTOOLS)
+# define DEVTOOLS 1
+#else
+# define DEVTOOLS 0
+#endif
+
 #ifdef DNSMASQ_COMPILE_OPTS
 
 static char *compile_opts = 

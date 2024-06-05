@@ -192,6 +192,9 @@ struct myoption {
 #define LOPT_NO_DHCP4      383
 #define LOPT_MAX_PROCS     384
 #define LOPT_DNSSEC_LIMITS 385
+#define LOPT_CACHE_HASH    386
+#define LOPT_BUZ_HASH      387
+#define LOPT_RAND32        388
 
 #ifdef HAVE_GETOPT_LONG
 static const struct option opts[] =  
@@ -388,6 +391,11 @@ static const struct myoption opts[] =
     { "use-stale-cache", 2, 0 , LOPT_STALE_CACHE },
     { "no-ident", 0, 0, LOPT_NO_IDENT },
     { "max-tcp-connections", 1, 0, LOPT_MAX_PROCS },
+#ifdef HAVE_DEVTOOLS
+    { "dbg-cache-hash", 0, 0, LOPT_CACHE_HASH },
+    { "dbg-buz-hash", 0, 0, LOPT_BUZ_HASH },
+    { "dbg-rand32", 0, 0, LOPT_RAND32 },
+#endif
     { NULL, 0, 0, 0 }
   };
 
@@ -591,6 +599,11 @@ static struct {
   { LOPT_NO_IDENT, OPT_NO_IDENT, NULL, gettext_noop("Do not add CHAOS TXT records."), NULL },
   { LOPT_CACHE_RR, ARG_DUP, "<RR-type>", gettext_noop("Cache this DNS resource record type."), NULL },
   { LOPT_MAX_PROCS, ARG_ONE, "<integer>", gettext_noop("Maximum number of concurrent tcp connections."), NULL },
+#ifdef HAVE_DEVTOOLS
+  { LOPT_CACHE_HASH, 0, NULL, gettext_noop("Hash STDIN strings with cache_hash_uint()."), NULL },
+  { LOPT_BUZ_HASH, 0, NULL, gettext_noop("Hash STDIN strings with buzhash()."), NULL },
+  { LOPT_RAND32, 0, NULL, gettext_noop("Output stream of rand32() values."), NULL },
+#endif
   { 0, 0, NULL, NULL, NULL }
 }; 
 
@@ -5962,6 +5975,34 @@ void read_opts(int argc, char **argv, char *compile_opts)
 	  printf(_("under the terms of the GNU General Public License, version 2 or 3.\n"));
           exit(0);
         }
+#ifdef HAVE_DEVTOOLS
+      else if (option == LOPT_CACHE_HASH || option == LOPT_BUZ_HASH || option == LOPT_RAND32)
+	{
+	  if (isatty(STDOUT_FILENO))
+	    die(_("will not output binary to tty"), NULL, EC_MISC);
+
+	  if (option == LOPT_RAND32)
+	    {
+	      for (u32 hash = rand32(); fwrite(&hash, sizeof(hash), 1, stdout) == 1; hash = rand32())
+		;
+	      exit(0);
+	    }
+
+	  char domain[260]; // TODO: what's the correct size?
+	  while (fgets(domain, sizeof(domain), stdin))
+	  {
+	    char *last = domain + strlen(domain) - 1; // FIXME: overflow on ""
+	    for (; last >= domain && isspace(*last); last--)
+	      *last = '\0';
+	    u32 hash =
+	      option == LOPT_CACHE_HASH
+	      ? cache_hash_uint(domain)
+	      : buz_hash(domain);
+	    fwrite(&hash, sizeof(hash), 1, stdout);
+	  }
+	  exit(0);
+	}
+#endif
       else if (option == 'C')
 	{
           if (!conffile)

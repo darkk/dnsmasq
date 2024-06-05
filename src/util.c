@@ -38,6 +38,8 @@
 #include <math.h>
 #endif
 
+static void buz_init();
+
 /* SURF random number generator */
 
 static u32 seed[32];
@@ -55,6 +57,8 @@ void rand_init()
     die(_("failed to seed the random number generator: %s"), NULL, EC_MISC);
   
   close(fd);
+
+  buz_init();
 }
 
 #define ROTATE(x,b) (((x) << (b)) | ((x) >> (32 - (b))))
@@ -117,6 +121,92 @@ u64 rand64(void)
   outleft -= 2;
 
   return (u64)out[outleft+1] + (((u64)out[outleft]) << 32);
+}
+
+static int popcount32(u32 i)
+{
+  i = i - ((i >> 1) & 0x55555555u);
+  i = (i & 0x33333333) + ((i >> 2) & 0x33333333u);
+  i = (i + (i >> 4)) & 0x0F0F0F0Fu;
+  i *= 0x01010101u;
+  return  i >> 24;
+}
+
+// 256 is not a balanced table for LDH input.
+static u32 buz_table[38];
+static u32 buz_hinit;
+
+static void buz_init()
+{
+  for (int i = 0; i < countof(buz_table); ++i)
+    buz_table[i] = rand32();
+
+  for (int bit = 0; bit < 32; bit++)
+    {
+      const u32 mask = (1u << bit);
+      int count = 0;
+      for (int i = 0; i < countof(buz_table); ++i)
+	count += !!(buz_table[i] & mask);
+      while (count != countof(buz_table) / 2)
+	{
+	  const int i = rand16() % countof(buz_table);
+	  const u32 bitval = (buz_table[i] & mask);
+	  if (count < countof(buz_table) / 2 && !bitval)
+	    {
+	      buz_table[i] ^= mask;
+	      count++;
+	    }
+	  else if (count > countof(buz_table) / 2 && bitval)
+	    {
+	      buz_table[i] ^= mask;
+	      count--;
+	    }
+	}
+    }
+
+  buz_hinit = rand32(); /* should it really be bit-balanced as well? */
+  for (int count = popcount32(buz_hinit); count != 16; )
+    {
+      const int bit = rand16() % 32;
+      const u32 mask = (1u << bit);
+      const u32 bitval = (buz_hinit & mask);
+      if (count < 16 && !bitval)
+	{
+	  buz_hinit ^= mask;
+	  count++;
+	}
+      else if (count > 16 && bitval)
+	{
+	  buz_hinit ^= mask;
+	  count--;
+	}
+    }
+}
+
+static u8 buz_ldh_map(u8 c)
+{
+  const u8 cl = c | 0x20;
+  if (0x61 <= cl && cl <= 0x7a) /* [a-z] */
+    return cl - 0x61;
+  else if (0x30 <= c && c <= 0x39) /* [0-9] */
+    return c - 0x30 + 26;
+  else if (c == 0x2d || c == 0x2e) /* [-.] */
+    return c - 0x2d + 36;
+  else if (c == 0x5f)
+    return c - 0x5f + 36; /* '_' = '-' */
+  else
+    return c % countof(buz_table);
+  /* Non-LDHu characters are close-to-impossible in DNS, so balance
+   * of probabilities for those characters does not matter enough
+   * to get them special treatment. */
+}
+
+u32 buz_hash(char *name)
+{
+  u32 ret = buz_hinit;
+  while (*name)
+    ret = ROTATE(ret, 1) ^ buz_table[buz_ldh_map((unsigned char)*name++)];
+  return ret;
 }
 
 int rr_on_list(struct rrlist *list, unsigned short rr)
