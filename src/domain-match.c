@@ -86,7 +86,16 @@ static void build_server_array__(void)
     daemon->serverarray[count] = serv;
   
   qsort(daemon->serverarray, daemon->serverarraysz, sizeof(struct server *), order_qsort);
-  
+
+  size_t usable0 = ~(uintptr_t)0;
+  size_t usable1 = ~(uintptr_t)0;
+  for (count = 0; count < daemon->serverarraysz; count++)
+    {
+      usable0 &= ~(uintptr_t)daemon->serverarray[count];
+      usable1 &= (uintptr_t)daemon->serverarray[count];
+    }
+  my_syslog(LOG_INFO, _("usable pointer bits: =0 0x%lx, =1 0x%lx"), usable0, usable1);
+
   /* servers need the location in the array to find all the whole
      set of equivalent servers from a pointer to a single one. */
   for (count = 0; count < daemon->serverarraysz; count++)
