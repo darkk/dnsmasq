@@ -15,11 +15,143 @@
 */
 
 #include "dnsmasq.h"
-#include <assert.h>
 
 static int order(char *qdomain, size_t qlen, struct server *serv);
 static int order_qsort(const void *a, const void *b);
 static int order_servers(struct server *s, struct server *s2);
+static struct server* server_alloc(u16 flags, const char *domain);
+
+#ifdef HAVE_LOOP
+# define server_loops(serv) (0) // (serv->flags & SERV_LOOP)
+#else
+# define server_loops(serv) (0)
+#endif
+
+static inline uintptr_t worm_mask(void* ptr, uintptr_t key, const struct worm_bsearch *w)
+{
+  const uintptr_t srot = rotrightptr((uintptr_t)ptr ^ w->ptrxor, w->ptrwrotr);
+  assert((srot & w->keymask) == 0);
+  return srot | (key & w->keymask);
+}
+
+static inline void* worm_unmask(uintptr_t val, const struct worm_bsearch *w)
+{
+  return (void*)(rotleftptr(val & ~(w->keymask), w->ptrwrotr) ^ w->ptrxor);
+}
+
+// It's possible to fit it into single cache-lne using some bits of ptrxor for mask :-)
+struct serv_bfind_ctx {
+  struct worm_bsearch w;
+  uintptr_t hash;
+  const char *qdomain;
+};
+
+static int server_bfind_cmp(const void *ctxv, const void *val)
+{
+  const struct serv_bfind_ctx *ctx = ctxv;
+  const uintptr_t *p = val;
+  const uintptr_t ctx_masked = ctx->hash & ctx->w.keymask;
+  const uintptr_t hash_masked = *p & ctx->w.keymask;
+
+  const int log_cmp = 0;
+  if (log_cmp) {
+    const struct server *useless = worm_unmask(*p, &ctx->w);
+    my_syslog(LOG_INFO, "cmp: %s. (%p) <^_^> (%p) %s.", ctx->qdomain, bp_hash(ctx->qdomain), bp_hash(server_domain(useless)), server_domain(useless));
+  }
+  if (ctx_masked < hash_masked)
+    return -1;
+  if (ctx_masked > hash_masked)
+    return 1;
+
+  const struct server *s = worm_unmask(*p, &ctx->w);
+  const int lobits = MIN(ctzptr(ctx->w.keymask), 16);
+  const uintptr_t lomask = ~(UINTPTR_MAX << lobits);
+  if (log_cmp)
+    my_syslog(LOG_INFO, "cmp: %s. (%p) <o-o> (%p) %s.", ctx->qdomain, bp_hash(ctx->qdomain), bp_hash(server_domain(s)), server_domain(s));
+  if ((ctx->hash & lomask) < s->domhash16)
+    return -1;
+  if ((ctx->hash & lomask) > s->domhash16)
+    return 1;
+
+  if (log_cmp)
+    my_syslog(LOG_INFO, "cmp: %s. (%p) <0-@> (%p) %s.", ctx->qdomain, bp_hash(ctx->qdomain), bp_hash(server_domain(s)), server_domain(s));
+  return hostname_order(ctx->qdomain, server_domain(s));
+}
+
+static size_t server_bfind(struct worm_bsearch *w, uintptr_t hash, const char *qdomain)
+{
+  const size_t partition = w->partbits ? (hash >> (PTRBITS - w->partbits)) : 0;
+  uintptr_t *table = wormb_data_begin(w);
+  uintptr_t *begin = wormb_part_begin(w, partition);
+  size_t nelem = wormb_part_end(w, partition) - begin;
+
+  struct serv_bfind_ctx ctx;
+  memcpy(&ctx.w, w, sizeof(*w));
+  ctx.hash = hash;
+  ctx.qdomain = qdomain;
+  uintptr_t *p = bsearch(&ctx, begin, nelem, sizeof(void*), server_bfind_cmp);
+  if (!p)
+    return SIZE_MAX;
+  assert(hostname_order(server_domain(worm_unmask(*p, w)), qdomain) == 0);
+  return p - table;
+}
+
+// `mask` is a bitmask of constant bits in the pointer values for WORM data
+// structure. 16 bits of hash are available in the structure itself in a
+// cacheline far far away so those bits of entropy should be used as the least
+// significant bits for last-resort comparison.
+u8 bestrotright(const uintptr_t cnst, const int partbits)
+{
+  int retval = 0;
+  const int possible = popcountptr(cnst);
+  const uintptr_t mpart = UINTPTR_MAX >> partbits;
+  for (int bestpop = -1, bestt0 = -1, rot = 0; bestpop < possible && rot < PTRBITS; rot++)
+    {
+      const uintptr_t rotcnst = rotrightptr(cnst, rot) & mpart;
+      const int pop = popcountptr(rotcnst);
+      const int t0 = ctzptr(rotcnst);
+      if (bestpop < pop || (bestpop == pop && bestt0 < t0))
+	{
+	  retval = rot;
+	  bestpop = pop;
+	  bestt0 = t0;
+	}
+    }
+  return retval;
+}
+
+static int count_hash = 0;
+
+static int wormb_order qcomp(const void *av, const void *bv, void *ctxv)
+{
+  const uintptr_t *au = av;
+  const uintptr_t *bu = bv;
+  const struct worm_bsearch *w = ctxv;
+  const struct server *as = worm_unmask(*au, w); // (const struct server *)(rotleftptr(*au & ~(w->keymask), w->ptrwrotr) ^ w->ptrxor);
+  const struct server *bs = worm_unmask(*bu, w); // (const struct server *)(rotleftptr(*bu & ~(w->keymask), w->ptrwrotr) ^ w->ptrxor);
+  uintptr_t ah = as->hash4qsort;
+  uintptr_t bh = bs->hash4qsort;
+  count_hash += 2;
+
+  assert((ah & w->keymask) == (*au & w->keymask) && (bh & w->keymask) == (*bu & w->keymask));
+
+  const int lobits = MIN(ctzptr(w->keymask), 16); // low bits usable for domhash16
+  const uintptr_t lomask = ~(UINTPTR_MAX << lobits);
+  assert((ah & lomask) == as->domhash16 && (bh & lomask) == bs->domhash16);
+  const uintptr_t sortmask = ~(UINTPTR_MAX >> w->partbits) | w->keymask | lomask;
+
+  ah &= sortmask;
+  bh &= sortmask;
+
+  // TODO: SERV_WILDCARD, SERV_FOR_NODOTS, SERV_LITERAL_ADDRESS etc
+
+  if (ah < bh)
+    return -1;
+  else if (ah > bh)
+    return 1;
+
+  return hostname_order(server_domain(as), server_domain(bs));
+}
 
 static void build_server_array__(void);
 void build_server_array(void)
@@ -32,75 +164,173 @@ void build_server_array(void)
 static void build_server_array__(void)
 {
   struct server *serv;
-  int count = 0;
-  
+  uintptr_t count = 0; // TODO: consider `uint` and definition of clzui()
+  uintptr_t ptr0 = ~(uintptr_t)0;
+  uintptr_t ptr1 = ~(uintptr_t)0;
+
+  // serv->next might be shuffled around, so `serial` does not always represent
+  // the position in the config file, however it still reflect ordering
+  // of servers within the same domain/prefix correctly and that's what matters.
+  int serial = 1;
   for (serv = daemon->servers; serv; serv = serv->next)
-#ifdef HAVE_LOOP
-    if (!(serv->flags & SERV_LOOP))
-#endif
-      {
-	count++;
-	if (serv->flags & SERV_WILDCARD)
-	  daemon->server_has_wildcard = 1;
-      }
-  
+    {
+      serv->serial = serial;
+      serial++;
+      if (!server_loops(serv))
+	{
+	  serv->last_server = -1;
+	  ptr0 &= ~(uintptr_t)serv;
+	  ptr1 &= (uintptr_t)serv;
+	  count++;
+	  if (serv->flags & SERV_WILDCARD)
+	    daemon->server_has_wildcard = 1;
+	}
+    }
   for (serv = daemon->local_domains; serv; serv = serv->next)
     {
+      ptr0 &= ~(uintptr_t)serv;
+      ptr1 &= (uintptr_t)serv;
       count++;
       if (serv->flags & SERV_WILDCARD)
 	daemon->server_has_wildcard = 1;
     }
-  
+
+  assert(count); // TODO: implement a short-cut for a dnsmasq-without-upstreams, e.g. DHCP/TFTP
+
+  // This kind of optimisation is not so useful in case of pointer
+  // authentication, but ARMv8.3 is far far away from me and my ancient
+  // OpenWRT-capable routers.
+
+  // Magic number `3` comes from assumption that the machine has 8 (1<<3) pointers per cacheline.
+  // Partiion that does nothing to save an extra cachemiss is a total waste of RAM.
+  const int maxpartbits = MAX(PTRBITS - clzptr(count) - 3, 0);
+  const int defpartbits = maxpartbits / 2;
+  const int config_partbits = -1;
+  const int partbits = config_partbits >= 0 ? MIN(config_partbits, maxpartbits) : defpartbits;
+  const u8 rotr = bestrotright(ptr0 | ptr1, partbits);
+  const uintptr_t keymask = rotrightptr(ptr0 | ptr1, rotr) & (UINTPTR_MAX >> partbits);
+  const int lobits = MIN(ctzptr(keymask), 16); // low bits usable for domhash16
+  const uintptr_t lomask = ~(UINTPTR_MAX << lobits);
+
+  struct worm_bsearch* w = wormb_alloc(partbits, count);
+  daemon->serverhash = w;
+  w->ptrxor = ptr1;
+  w->keymask = keymask;
+  w->ptrwrotr = rotr;
+
+  assert(wormb_data_end(w) - wormb_data_begin(w) == (ptrdiff_t)count);
+  uintptr_t *p = wormb_data_begin(w);
+  struct server *next = NULL;
+  for (serv = daemon->servers; serv && p != wormb_data_end(w); p++, serv = next)
+    {
+      next = serv->next; // union with hash4qsort
+      const uintptr_t hash = bp_hash(server_domain(serv));
+      serv->domhash16 = hash & lomask;
+      serv->hash4qsort = hash;
+      *p = worm_mask(serv, hash, w);
+    }
+  assert(!serv);
+  assert(!daemon->local_domains || p != wormb_data_end(w));
+  for (serv = daemon->local_domains; serv && p != wormb_data_end(w); p++, serv = next)
+    {
+      next = serv->next; // union with hash4qsort
+      const uintptr_t hash = bp_hash(server_domain(serv));
+      serv->domhash16 = hash & lomask;
+      serv->hash4qsort = hash;
+      *p = worm_mask(serv, hash, w);
+    }
+  assert(!serv);
+  assert(p == wormb_data_end(w));
+  assert(wormb_data_end(w) - wormb_data_begin(w) == (ptrdiff_t)count);
+  qsort_arr(wormb_data_begin(w), count, sizeof(void*), wormb_order, w);
+
+  daemon->serverarray = whine_malloc(count * sizeof(void*));
   daemon->serverarraysz = count;
 
-  if (count > daemon->serverarrayhwm)
+  // FIXME: server_loops is not handled correctly here
+  daemon->servers = daemon->local_domains = NULL;
+  struct server **tserv = &daemon->servers;
+  struct server **tlocal = &daemon->local_domains;
+  size_t i;
+  for (p = wormb_data_begin(w), i = 0; p != wormb_data_end(w); p++, i++)
     {
-      struct server **new;
-
-      count += 10; /* A few extra without re-allocating. */
-
-      if ((new = whine_malloc(count * sizeof(struct server *))))
+      serv = worm_unmask(*p, w);
+      daemon->serverarray[i] = serv;
+      if (server_sizeof(serv->flags) == sizeof(struct server))
+	serv->arrayposn = i;
+      if (partbits)
 	{
-	  if (daemon->serverarray)
-	    free(daemon->serverarray);
-	  
-	  daemon->serverarray = new;
-	  daemon->serverarrayhwm = count;
+	  size_t partition = serv->hash4qsort >> (PTRBITS - partbits);
+	  if (partition != ~(SIZE_MAX << partbits))
+	    w->tabluint[partition] = (uintptr_t)(p+1);
 	}
+      struct server ***dest = serv->flags & SERV_IS_LOCAL ? &tlocal : &tserv;
+      **dest = serv;
+      *dest = &serv->next;
     }
+  assert(i == count);
+  daemon->servers_tail = daemon->servers ? container_of(tserv, struct server, next) : NULL;
+  *tserv = NULL;
+  *tlocal = NULL;
 
-  count = 0;
-  
-  for (serv = daemon->servers; serv; serv = serv->next)
-#ifdef HAVE_LOOP
-    if (!(serv->flags & SERV_LOOP))
-#endif
-      {
-	daemon->serverarray[count] = serv;
-	serv->serial = count;
-	serv->last_server = -1;
-	count++;
-      }
-  
-  for (serv = daemon->local_domains; serv; serv = serv->next, count++)
-    daemon->serverarray[count] = serv;
-  
-  qsort(daemon->serverarray, daemon->serverarraysz, sizeof(struct server *), order_qsort);
+#if 0
 
-  size_t usable0 = ~(uintptr_t)0;
-  size_t usable1 = ~(uintptr_t)0;
-  for (count = 0; count < daemon->serverarraysz; count++)
+  struct hworm *ht = daemon->serverhash;
+  if (worm_capacity(daemon->serverhash) < worm_expected_capacity(count))
     {
-      usable0 &= ~(uintptr_t)daemon->serverarray[count];
-      usable1 &= (uintptr_t)daemon->serverarray[count];
+      /* It should be at the very least count+3 to handle MAXNS `nameservers`
+	 from resolv.conf without re-allocating the table. */
+      ht = worm_alloc(count+10);
+      if (ht)
+	{
+	  if (daemon->serverhash)
+	    free(daemon->serverhash);
+	  daemon->serverhash = ht;
+	}
+      else if (count < worm_capacity(daemon->serverhash))
+        {
+	  /* Let's assume that degraded performance is better than crash.
+	   * TODO(?): fallback to bsearch instead of hashtable? */
+	  const u8 capapow = daemon->serverhash->capapow;
+	  memset(daemon->serverhash, 0, worm_sizeof(capapow));
+	  daemon->serverhash->capapow = capapow;
+	  ht = daemon->serverhash;
+        }
+      else
+	abort();
     }
-  my_syslog(LOG_INFO, _("usable pointer bits: =0 0x%lx, =1 0x%lx"), usable0, usable1);
 
+  ht->keymask = (ptr0 | ptr1);
+  ht->ptrxor = (uintptr_t)server_null;
+
+  /* Servers are correctly sorted within each and every domain "cluster"
+   * as hashtable insertion preserves order. */
   /* servers need the location in the array to find all the whole
      set of equivalent servers from a pointer to a single one. */
-  for (count = 0; count < daemon->serverarraysz; count++)
-    if (!(daemon->serverarray[count]->flags & SERV_IS_LOCAL))
-      daemon->serverarray[count]->arrayposn = count;
+  for (serv = daemon->servers; serv; serv = serv->next)
+    serv->arrayposn = worm_set(ht, bp_hash(server_domain(serv)), serv);
+  for (serv = daemon->local_domains; serv; serv = serv->next)
+    worm_set(ht, bp_hash(server_domain(serv)), serv);
+
+  // I suspect following common scenarios for domain name and/or suffix being reused:
+  // 0) --server=192.0.2.53 --server=192.0.2.54 # both from resolv.conf
+  // 1) --server=/corp.example.com/192.0.2.53 --server=/corp.example.com/192.0.2.54
+  // 2) --server=/example.net/# --local=/*example.net/
+  // 3) --local=/example.org/ --address=/example.org/192.0.2.1
+  // 4) --local=/example.org/ --address=/example.org/192.0.2.1 --address=/example.org/2001:db8::1
+  // XXX(?): should (domain_len == 0) be a special case with a special chain?
+  const size_t first_run = !ht->table[0]
+    ? worm_find_ptr(ht, 0)
+    : worm_find_ptr(ht, worm_find_null(ht, 0));
+  size_t max_run = 0, off = first_run;
+  do {
+    size_t end = worm_find_null(ht, off);
+    size_t cur_run = off < end ? end - off : worm_capacity(ht) - off + end;
+    max_run = max_size(max_run, cur_run);
+    off = worm_find_ptr(ht, end);
+  } while (off != first_run);
+  fprintf(stderr, "max_run: %lu (%lu bytes)\n", max_run, max_run * sizeof(void*));
+#endif
 }
 
 /* we're looking for the server whose domain is the longest exact match
@@ -129,7 +359,9 @@ static int lookup_domain__(char *domain, int flags, int *lowout, int *highout)
 {
   int rc, crop_query, nodots;
   ssize_t qlen;
-  int try, high, low = 0;
+  int try = 0, high = 0, low = 0;
+  (void)high;
+  (void)low;
   int nlow = 0, nhigh = 0;
   char *cp, *qdomain = domain;
 
@@ -150,6 +382,8 @@ static int lookup_domain__(char *domain, int flags, int *lowout, int *highout)
   /* Search shorter and shorter RHS substrings for a match */
   while (qlen >= 0)
     {
+      crop_query = 1;
+#if 0
       /* Note that when we chop off a label, all the possible matches
 	 MUST be at a larger index than the nearest failing match with one more
 	 character, since the array is sorted longest to smallest. Hence 
@@ -208,7 +442,18 @@ static int lookup_domain__(char *domain, int flags, int *lowout, int *highout)
 	      low = try;
 	    }
 	};
-      
+#endif
+      uintptr_t hash = bp_hash(qdomain);
+      size_t ndx = server_bfind(daemon->serverhash, hash, qdomain);
+      if (ndx != SIZE_MAX)
+      {
+	rc = 0;
+	try = ndx;
+	assert(hostname_order(server_domain(daemon->serverarray[ndx]), qdomain) == 0);
+      }
+      else
+	rc = -1;
+
       if (rc == 0)
 	{
 	  int found = 1;
@@ -542,6 +787,7 @@ static int order_servers(struct server *s1, struct server *s2)
   if (s1->flags & SERV_WILDCARD)
     return (s2->flags & SERV_WILDCARD) ? 0 : 1;
 
+  (void)&order_qsort;
   return (s2->flags & SERV_WILDCARD) ? -1 : 0;
 }
   
@@ -643,11 +889,6 @@ void cleanup_servers(void)
     }
 }
 
-static inline size_t max_size(size_t a, size_t b)
-{
-  return (a > b) ? a : b;
-}
-
 static struct server* server_alloc(u16 flags, const char *domain)
 {
   if (!domain)
@@ -710,6 +951,7 @@ int add_update_server(int flags,
   if (!alloc_serv)
     return 0;
 
+  // TODO: make `serial` in-sync with addition to servers_tail in case of structure reuse.
   // NB: `domain` is not modified.
   // server_domain(alloc_serv) == alloc_domain
   

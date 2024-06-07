@@ -37,7 +37,6 @@
 #ifdef HAVE_DEVTOOLS
 #include <math.h>
 #endif
-#include <assert.h>
 
 static void bp_init();
 
@@ -333,13 +332,28 @@ static u8 buz_ldh_map(u8 c)
    * to get them special treatment. */
 }
 
-uintptr_t bp_hash(char *name)
+uintptr_t bp_hash(const char *name)
 {
   uintptr_t ret = bp.buz.init;
   while (*name)
     {
       const u8 ldh = buz_ldh_map((u8)*name++);
       ret = rotleftptr(ret, 23) ^ bp.buz.table[ldh] ^ bp.pearson[((u8)(ret) ^ ldh) & PEARSON_MASK];
+    }
+  return ret;
+}
+
+struct worm_bsearch* wormb_alloc(int partbits, size_t nmemb)
+{
+  assert(0 <= partbits && partbits < PTRBITS);
+  const size_t sz = max_size(
+      sizeof(struct worm_bsearch),
+      offsetof(struct worm_bsearch, tabluint) + sizeof(void*) * (nmemb + (1u << partbits)));
+  struct worm_bsearch * const ret = whine_malloc(sz);
+  if (ret)
+    {
+      ret->partbits = partbits;
+      ret->tabluint[wormb_npart(ret) - 1] = (uintptr_t)(ret->tabluint + wormb_npart(ret) + nmemb);
     }
   return ret;
 }
