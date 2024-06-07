@@ -1693,7 +1693,7 @@ void check_servers(int no_loop_check)
 	 continue;
        
        if ((serv->flags & SERV_LITERAL_ADDRESS) &&
-	   !(serv->flags & (SERV_6ADDR | SERV_4ADDR | SERV_ALL_ZEROS)) &&
+	   !(serv->flags & SERV_ADDR_MASK) &&
 	   !server_domain_empty(serv))
 	 {
 	   count--;

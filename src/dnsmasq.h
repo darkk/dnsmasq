@@ -551,11 +551,13 @@ union mysockaddr {
 
 /* The actual values here matter, since we sort on them to get records in the order
    IPv6 addr, IPv4 addr, all zero return, resolvconf servers, upstream server, no-data return  */
-#define SERV_LITERAL_ADDRESS    1  /* addr is the answer, or NoDATA is the answer, depending on the next four flags */
+#define SERV_LITERAL_ADDRESS    1  /* addr is the answer, or NoDATA is the answer, depending on the first four bits */
 #define SERV_USE_RESOLV         2  /* forward this domain in the normal way */
-#define SERV_ALL_ZEROS          4  /* return all zeros for A and AAAA */
-#define SERV_4ADDR              8  /* addr is IPv4 */
-#define SERV_6ADDR             16  /* addr is IPv6 */
+#define SERV_ADDR_MASK       0x0C
+#define SERV_X_ZEROS         0x04  /* return all zeros for A and AAAA */
+#define SERV_X_4ADDR         0x08  /* addr is IPv4 */
+#define SERV_X_6ADDR         0x0C  /* addr is IPv6 */
+/* #define SERV_UNUSED         16 */
 #define SERV_HAS_SOURCE        32  /* source address defined */
 #define SERV_FOR_NODOTS        64  /* server for names with no domain part only */
 #define SERV_WARNED_RECURSIVE 128  /* avoid warning spam */
@@ -572,6 +574,8 @@ union mysockaddr {
 
 /* If the server is USE_RESOLV or LITERAL_ADDRES, it lives on the local_domains chain. */
 #define SERV_IS_LOCAL (SERV_USE_RESOLV | SERV_LITERAL_ADDRESS)
+/* If the server is SERV_LOCAL_ADDRESS, it has an addr to give as the answer. */
+#define SERV_LOCAL_ADDRESS (SERV_ADDR_MASK)
 
 struct serverfd {
   int fd;
@@ -640,9 +644,9 @@ static inline size_t server_sizeof(u16 flags)
   return
     (flags & SERV_IS_LOCAL) == 0
     ? sizeof(struct server)
-    : (flags & SERV_6ADDR)
+    : ((flags & SERV_ADDR_MASK) == SERV_X_6ADDR)
     ? sizeof(struct serv_addr6)
-    : (flags & SERV_4ADDR)
+    : ((flags & SERV_ADDR_MASK) == SERV_X_4ADDR)
     ? sizeof(struct serv_addr4)
     : sizeof(struct serv_local);
 }
@@ -652,9 +656,9 @@ static inline size_t server_offsetof_domain(u16 flags)
   return
     (flags & SERV_IS_LOCAL) == 0
     ? offsetof(struct server, domain)
-    : (flags & SERV_6ADDR)
+    : ((flags & SERV_ADDR_MASK) == SERV_X_6ADDR)
     ? offsetof(struct serv_addr6, domain)
-    : (flags & SERV_4ADDR)
+    : ((flags & SERV_ADDR_MASK) == SERV_X_4ADDR)
     ? offsetof(struct serv_addr4, domain)
     : offsetof(struct serv_local, domain);
 }
