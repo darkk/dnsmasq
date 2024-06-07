@@ -297,8 +297,6 @@ int filter_servers(int seed, int flags, int *lowout, int *highout)
   
   nhigh++;
   
-#define SERV_LOCAL_ADDRESS (SERV_6ADDR | SERV_4ADDR | SERV_ALL_ZEROS)
-  
   if (flags & F_CONFIG)
     {
       /* We're just lookin for any matches that return an RR. */
@@ -317,7 +315,7 @@ int filter_servers(int seed, int flags, int *lowout, int *highout)
 	 
 	 See which of those match our query in that priority order and narrow (low, high) */
       
-      for (i = nlow; i < nhigh && (daemon->serverarray[i]->flags & SERV_6ADDR); i++);
+      for (i = nlow; i < nhigh && ((daemon->serverarray[i]->flags & SERV_ADDR_MASK) == SERV_X_6ADDR); i++);
       
       if (!(flags & F_SERVER) && i != nlow && (flags & F_IPV6))
 	nhigh = i;
@@ -325,7 +323,7 @@ int filter_servers(int seed, int flags, int *lowout, int *highout)
 	{
 	  nlow = i;
 	  
-	  for (i = nlow; i < nhigh && (daemon->serverarray[i]->flags & SERV_4ADDR); i++);
+	  for (i = nlow; i < nhigh && ((daemon->serverarray[i]->flags & SERV_ADDR_MASK) == SERV_X_4ADDR); i++);
 	  
 	  if (!(flags & F_SERVER) && i != nlow && (flags & F_IPV4))
 	    nhigh = i;
@@ -333,7 +331,7 @@ int filter_servers(int seed, int flags, int *lowout, int *highout)
 	    {
 	      nlow = i;
 	      
-	      for (i = nlow; i < nhigh && (daemon->serverarray[i]->flags & SERV_ALL_ZEROS); i++);
+	      for (i = nlow; i < nhigh && ((daemon->serverarray[i]->flags & SERV_ADDR_MASK) == SERV_X_ZEROS); i++);
 	      
 	      if (!(flags & F_SERVER) && i != nlow && (flags & (F_IPV4 | F_IPV6)))
 		nhigh = i;
@@ -388,11 +386,11 @@ int is_local_answer(time_t now, int first, char *name)
   
   if ((flags = daemon->serverarray[first]->flags) & SERV_LITERAL_ADDRESS)
     {
-      if (flags & SERV_4ADDR)
+      if ((flags & SERV_ADDR_MASK) == SERV_X_4ADDR)
 	rc = F_IPV4;
-      else if (flags & SERV_6ADDR)
+      else if ((flags & SERV_ADDR_MASK) == SERV_X_6ADDR)
 	rc = F_IPV6;
-      else if (flags & SERV_ALL_ZEROS)
+      else if ((flags & SERV_ADDR_MASK) == SERV_X_ZEROS)
 	rc = F_IPV4 | F_IPV6;
       else
 	{
@@ -433,7 +431,7 @@ size_t make_local_answer(int flags, int gotname, size_t size, struct dns_header 
       {
 	struct serv_addr4 *srv = (struct serv_addr4 *)daemon->serverarray[start];
 
-	if (srv->flags & SERV_ALL_ZEROS)
+	if ((srv->flags & SERV_ADDR_MASK) == SERV_X_ZEROS)
 	  memset(&addr, 0, sizeof(addr));
 	else
 	  addr.addr4 = srv->addr;
@@ -448,7 +446,7 @@ size_t make_local_answer(int flags, int gotname, size_t size, struct dns_header 
       {
 	struct serv_addr6 *srv = (struct serv_addr6 *)daemon->serverarray[start];
 
-	if (srv->flags & SERV_ALL_ZEROS)
+	if ((srv->flags & SERV_ADDR_MASK) == SERV_X_ZEROS)
 	  memset(&addr, 0, sizeof(addr));
 	else
 	  addr.addr6 = srv->addr;
@@ -552,8 +550,8 @@ static int order_qsort(const void *a, const void *b)
      so the order is IPv6 literal, IPv4 literal, all-zero literal, 
      unqualified servers, upstream server, NXDOMAIN literal. */
   if (rc == 0)
-    rc = ((s2->flags & (SERV_LITERAL_ADDRESS | SERV_4ADDR | SERV_6ADDR | SERV_USE_RESOLV | SERV_ALL_ZEROS)) ^ SERV_LITERAL_ADDRESS) -
-      ((s1->flags & (SERV_LITERAL_ADDRESS | SERV_4ADDR | SERV_6ADDR | SERV_USE_RESOLV | SERV_ALL_ZEROS)) ^ SERV_LITERAL_ADDRESS);
+    rc = ((s2->flags & (SERV_LITERAL_ADDRESS | SERV_USE_RESOLV | SERV_ADDR_MASK)) ^ SERV_LITERAL_ADDRESS) -
+      ((s1->flags & (SERV_LITERAL_ADDRESS | SERV_USE_RESOLV | SERV_ADDR_MASK)) ^ SERV_LITERAL_ADDRESS);
 
   /* Finally, order by appearance in /etc/resolv.conf etc, for --strict-order */
   if (rc == 0)
@@ -712,10 +710,10 @@ int add_update_server(int flags,
       serv->next = daemon->local_domains;
       daemon->local_domains = serv;
       
-      if (flags & SERV_4ADDR)
+      if ((flags & SERV_ADDR_MASK) == SERV_X_4ADDR)
 	((struct serv_addr4*)serv)->addr = local_addr->addr4;
       
-      if (flags & SERV_6ADDR)
+      if ((flags & SERV_ADDR_MASK) == SERV_X_6ADDR)
 	((struct serv_addr6*)serv)->addr = local_addr->addr6;
     }
   else

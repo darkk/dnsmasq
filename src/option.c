@@ -3055,11 +3055,11 @@ static int one_opt(int option, char *arg, char *errstr, char *gen_err, int comma
 	  {
 	    /* # as literal address means return zero address for 4 and 6 */
 	    if (strcmp(arg, "#") == 0)
-	      flags = SERV_ALL_ZEROS | SERV_LITERAL_ADDRESS;
+	      flags = SERV_X_ZEROS | SERV_LITERAL_ADDRESS;
 	    else if (inet_pton(AF_INET, arg, &addr.addr4) > 0)
-	      flags = SERV_4ADDR | SERV_LITERAL_ADDRESS;
+	      flags = SERV_X_4ADDR | SERV_LITERAL_ADDRESS;
 	    else if (inet_pton(AF_INET6, arg, &addr.addr6) > 0)
-	      flags = SERV_6ADDR | SERV_LITERAL_ADDRESS;
+	      flags = SERV_X_6ADDR | SERV_LITERAL_ADDRESS;
 	    else
 	      ret_err(_("Bad address in --address"));
 	  }
