@@ -37,9 +37,9 @@
 #ifdef HAVE_DEVTOOLS
 #include <math.h>
 #endif
+#include <assert.h>
 
-static void buz_init();
-static void pearson_init();
+static void bp_init();
 
 /* SURF random number generator */
 
@@ -59,8 +59,7 @@ void rand_init()
   
   close(fd);
 
-  buz_init();
-  pearson_init();
+  bp_init();
 }
 
 #define ROTATE(x,b) (((x) << (b)) | ((x) >> (32 - (b))))
@@ -134,12 +133,22 @@ static int popcount32(u32 i)
   return  i >> 24;
 }
 
-// 256 is not a balanced table for LDH input.
-static u32 buz_table[38];
-static u32 buz_hinit;
-// Random permutation of bytes. I wonder if it's possible to combine two tables
-// into one, but it's a bit too tricky.
-static u8 pearson_table[256];
+// Both bp.table and bp.pearson are a bit biased due to coexistence,
+// but dieharder test suite is reasonably happy with bh_hash().
+// Moreover, dieharder is okay with 7bit version of bp.pearson, so the size
+// of bptable might be further reduced from 256 down to 156 bytes.
+//
+// https://www.dcs.gla.ac.uk/~hamer/cakes-talk.pdf
+static union bptable {
+  // BUZ hash table. It should be balanced, like each bit in all the words should
+  // have equal number of ones and zeros.  u32[256] is not really a balanced
+  // table for LDH input, so it's trimmed down to LDH alphabet.
+  struct {
+    u32 table[38], init;
+  } buz;
+  // Pearson hash random permutation of bytes for random walk.
+  u8 pearson[256];
+} bp;
 
 struct permutel {
     u16 index;
@@ -152,7 +161,7 @@ static int cmp16(const void *a, const void *b)
   return (int)(((struct permutel*)a)->index) - (int)(((struct permutel*)b)->index);
 }
 
-static void pearson_init()
+static void bp_init()
 {
   struct permutel permutation[256];
   memset(permutation, 0, sizeof(permutation));
@@ -161,56 +170,85 @@ static void pearson_init()
       permutation[i].index = rand16();
       permutation[i].value = i;
     }
-  qsort(permutation, 256, sizeof(permutation[0]), cmp16);
-  for (int i = 0; i < 256; ++i) {
-    pearson_table[i] = permutation[i].value;
-  }
-}
+  qsort(permutation, countof(permutation), sizeof(permutation[0]), cmp16);
 
-static void buz_init()
-{
-  for (int i = 0; i < countof(buz_table); ++i)
-    buz_table[i] = rand32();
+  u8 filled[sizeof(bp.buz.table)];
+  memset(filled, 0, sizeof(filled));
+  u8 *pz = (void*)-1;
+  for (u8 out = 0, in = 0; pz; pz = memchr(filled, 0, sizeof(filled)), out = pz - filled)
+    {
+      /* BUZ table is filled in pairs: value and ~value. */
+      for (; permutation[in].used; in++)
+	;
+      bp.pearson[out] = permutation[in].value;
+      filled[out] = 1;
+      permutation[in].used = 1;
+
+      const u8 notVal = ~bp.pearson[out];
+      for (in++; notVal != permutation[in].value; in++)
+	;
+      for (out = (rand32() % countof(bp.buz.table)) * 4 + (out % 4); filled[out]; out = (out+4) % sizeof(filled))
+	;
+
+      /* It's probably not the only way to construct the table that is shared
+       * between BUZ and Pearson hashes, but it's a straightforward one and
+       * the "quality" of the table will be verified with dieharder tests. */
+      bp.pearson[out] = permutation[in].value;
+      filled[out] = 1;
+      permutation[in].used = 1;
+    }
+
+  int count = 0;
+  for (int i = 0; i < countof(permutation); i++)
+    count += permutation[i].used;
+  assert(count == sizeof(bp.buz.table));
+
+  assert(sizeof(bp.buz.table) == offsetof(union bptable, buz.init));
+
+  for (u8 out = sizeof(bp.buz.table), in = 0; out < sizeof(bp.buz.table) + sizeof(bp.buz.init); out += 2)
+    {
+      for (; permutation[in].used; in++)
+	;
+      assert(bp.pearson[out] == 0);
+      bp.pearson[out] = permutation[in].value;
+      permutation[in].used = 1;
+
+      const int bitsNeeded = 8 - popcount32(bp.pearson[out]);
+      for (in++; permutation[in].used || popcount32(permutation[in].value) != bitsNeeded; in++)
+	;
+      assert(bitsNeeded == popcount32(permutation[in].value));
+
+      assert(bp.pearson[out+1] == 0);
+      bp.pearson[out+1] = permutation[in].value;
+      permutation[in].used = 1;
+    }
+
+  count = 0;
+  for (int i = 0; i < countof(permutation); i++)
+    count += permutation[i].used;
+  assert(count == sizeof(bp.buz.table) + sizeof(bp.buz.init));
+
+  // `in` might be optimised as soon as we tend to consume stuff in a sequential order.
+  for (u8 out = sizeof(bp.buz.table) + sizeof(bp.buz.init), in = 0; out != 0; out++)
+    {
+      for (; permutation[in].used; in++)
+	;
+      bp.pearson[out] = permutation[in].value;
+      permutation[in].used = 1;
+    }
+
+  for (int i = 0; i < countof(permutation); ++i)
+    assert(permutation[i].used);
+
+  assert(popcount32(bp.buz.init) == 16);
 
   for (int bit = 0; bit < 32; bit++)
     {
       const u32 mask = (1u << bit);
       int count = 0;
-      for (int i = 0; i < countof(buz_table); ++i)
-	count += !!(buz_table[i] & mask);
-      while (count != countof(buz_table) / 2)
-	{
-	  const int i = rand16() % countof(buz_table);
-	  const u32 bitval = (buz_table[i] & mask);
-	  if (count < countof(buz_table) / 2 && !bitval)
-	    {
-	      buz_table[i] ^= mask;
-	      count++;
-	    }
-	  else if (count > countof(buz_table) / 2 && bitval)
-	    {
-	      buz_table[i] ^= mask;
-	      count--;
-	    }
-	}
-    }
-
-  buz_hinit = rand32(); /* should it really be bit-balanced as well? */
-  for (int count = popcount32(buz_hinit); count != 16; )
-    {
-      const int bit = rand16() % 32;
-      const u32 mask = (1u << bit);
-      const u32 bitval = (buz_hinit & mask);
-      if (count < 16 && !bitval)
-	{
-	  buz_hinit ^= mask;
-	  count++;
-	}
-      else if (count > 16 && bitval)
-	{
-	  buz_hinit ^= mask;
-	  count--;
-	}
+      for (int i = 0; i < countof(bp.buz.table); ++i)
+	count += !!(bp.buz.table[i] & mask);
+      assert(count == countof(bp.buz.table) / 2);
     }
 }
 
@@ -226,7 +264,7 @@ static u8 buz_ldh_map(u8 c)
   else if (c == 0x5f)
     return c - 0x5f + 36; /* '_' = '-' */
   else
-    return c % countof(buz_table);
+    return c % countof(bp.buz.table);
   /* Non-LDHu characters are close-to-impossible in DNS, so balance
    * of probabilities for those characters does not matter enough
    * to get them special treatment. */
@@ -234,7 +272,7 @@ static u8 buz_ldh_map(u8 c)
 
 u32 bp_hash(char *name)
 {
-  u32 ret = buz_hinit;
+  u32 ret = bp.buz.init;
   while (*name)
     {
       const u8 ldh = buz_ldh_map((u8)*name++);
