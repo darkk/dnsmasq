@@ -39,6 +39,7 @@
 #endif
 
 static void buz_init();
+static void pearson_init();
 
 /* SURF random number generator */
 
@@ -59,6 +60,7 @@ void rand_init()
   close(fd);
 
   buz_init();
+  pearson_init();
 }
 
 #define ROTATE(x,b) (((x) << (b)) | ((x) >> (32 - (b))))
@@ -135,6 +137,35 @@ static int popcount32(u32 i)
 // 256 is not a balanced table for LDH input.
 static u32 buz_table[38];
 static u32 buz_hinit;
+// Random permutation of bytes. I wonder if it's possible to combine two tables
+// into one, but it's a bit too tricky.
+static u8 pearson_table[256];
+
+struct permutel {
+    u16 index;
+    u8 value;
+    u8 used;
+};
+
+static int cmp16(const void *a, const void *b)
+{
+  return (int)(((struct permutel*)a)->index) - (int)(((struct permutel*)b)->index);
+}
+
+static void pearson_init()
+{
+  struct permutel permutation[256];
+  memset(permutation, 0, sizeof(permutation));
+  for (int i = 0; i < countof(permutation); i++)
+    {
+      permutation[i].index = rand16();
+      permutation[i].value = i;
+    }
+  qsort(permutation, 256, sizeof(permutation[0]), cmp16);
+  for (int i = 0; i < 256; ++i) {
+    pearson_table[i] = permutation[i].value;
+  }
+}
 
 static void buz_init()
 {
@@ -201,11 +232,14 @@ static u8 buz_ldh_map(u8 c)
    * to get them special treatment. */
 }
 
-u32 buz_hash(char *name)
+u32 bp_hash(char *name)
 {
   u32 ret = buz_hinit;
   while (*name)
-    ret = ROTATE(ret, 1) ^ buz_table[buz_ldh_map((unsigned char)*name++)];
+    {
+      const u8 ldh = buz_ldh_map((u8)*name++);
+      ret = ROTATE(ret, 23) ^ bp.buz.table[ldh] ^ bp.pearson[(u8)(ret) ^ ldh];
+    }
   return ret;
 }
 

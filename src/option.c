@@ -193,7 +193,7 @@ struct myoption {
 #define LOPT_MAX_PROCS     384
 #define LOPT_DNSSEC_LIMITS 385
 #define LOPT_CACHE_HASH    386
-#define LOPT_BUZ_HASH      387
+#define LOPT_BP_HASH       387
 #define LOPT_RAND32        388
 
 #ifdef HAVE_GETOPT_LONG
@@ -393,7 +393,7 @@ static const struct myoption opts[] =
     { "max-tcp-connections", 1, 0, LOPT_MAX_PROCS },
 #ifdef HAVE_DEVTOOLS
     { "dbg-cache-hash", 0, 0, LOPT_CACHE_HASH },
-    { "dbg-buz-hash", 0, 0, LOPT_BUZ_HASH },
+    { "dbg-bp-hash", 0, 0, LOPT_BP_HASH },
     { "dbg-rand32", 0, 0, LOPT_RAND32 },
 #endif
     { NULL, 0, 0, 0 }
@@ -601,7 +601,7 @@ static struct {
   { LOPT_MAX_PROCS, ARG_ONE, "<integer>", gettext_noop("Maximum number of concurrent tcp connections."), NULL },
 #ifdef HAVE_DEVTOOLS
   { LOPT_CACHE_HASH, 0, NULL, gettext_noop("Hash STDIN strings with cache_hash_uint()."), NULL },
-  { LOPT_BUZ_HASH, 0, NULL, gettext_noop("Hash STDIN strings with buzhash()."), NULL },
+  { LOPT_BP_HASH, 0, NULL, gettext_noop("Hash STDIN strings with buz_pearson_hash()."), NULL },
   { LOPT_RAND32, 0, NULL, gettext_noop("Output stream of rand32() values."), NULL },
 #endif
   { 0, 0, NULL, NULL, NULL }
@@ -5976,7 +5976,7 @@ void read_opts(int argc, char **argv, char *compile_opts)
           exit(0);
         }
 #ifdef HAVE_DEVTOOLS
-      else if (option == LOPT_CACHE_HASH || option == LOPT_BUZ_HASH || option == LOPT_RAND32)
+      else if (option == LOPT_CACHE_HASH || option == LOPT_BP_HASH || option == LOPT_RAND32)
 	{
 	  if (isatty(STDOUT_FILENO))
 	    die(_("will not output binary to tty"), NULL, EC_MISC);
@@ -5997,7 +5997,7 @@ void read_opts(int argc, char **argv, char *compile_opts)
 	    u32 hash =
 	      option == LOPT_CACHE_HASH
 	      ? cache_hash_uint(domain)
-	      : buz_hash(domain);
+	      : bp_hash(domain);
 	    fwrite(&hash, sizeof(hash), 1, stdout);
 	  }
 	  exit(0);

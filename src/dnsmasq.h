@@ -1500,7 +1500,7 @@ void rand_init(void);
 unsigned short rand16(void);
 u32 rand32(void);
 u64 rand64(void);
-u32 buz_hash(char *name);
+u32 bp_hash(char *name);
 int rr_on_list(struct rrlist *list, unsigned short rr);
 int legal_hostname(char *name);
 char *canonicalise(char *in, int *nomem);
