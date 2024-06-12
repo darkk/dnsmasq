@@ -124,30 +124,42 @@ u64 rand64(void)
   return (u64)out[outleft+1] + (((u64)out[outleft]) << 32);
 }
 
-static int popcount32(u32 i)
-{
-  i = i - ((i >> 1) & 0x55555555u);
-  i = (i & 0x33333333) + ((i >> 2) & 0x33333333u);
-  i = (i + (i >> 4)) & 0x0F0F0F0Fu;
-  i *= 0x01010101u;
-  return  i >> 24;
-}
 
 // Both bp.table and bp.pearson are a bit biased due to coexistence,
-// but dieharder test suite is reasonably happy with bh_hash().
-// Moreover, dieharder is okay with 7bit version of bp.pearson, so the size
-// of bptable might be further reduced from 256 down to 156 bytes.
+// but dieharder test suite is reasonably happy with bh_hash():
+// 86/17/11 PASSED/WEAK/FAILED tests. cache_hash() in 2.90 was 1/0/113.
+//
+// PEARSON_LEN is 128 on 32-bit machine to 1) make initialization code uniform
+// across 32-bit and 64-bit platforms making bp.pearson shorter than buz.table,
+// 2) save 100 bytes of RAM.
+//
+// uintptr_t is used as a hash value type as keymask for a hashtable might
+// be as long as 44 bits for 100k servers sample on x86_64.  So let's fill
+// all the available bits in void* with entropy.
 //
 // https://www.dcs.gla.ac.uk/~hamer/cakes-talk.pdf
+// http://www.serve.net/buz/Notes.1st.year/HTML/C6/rand.011.html
+// http://www.serve.net/buz/Notes.1st.year/HTML/C6/rand.012.html
+
+#if PTRBITS == 32
+#  define PEARSON_LEN 128
+#  define PEARSON_MASK 0x7F
+#elif PTRBITS == 64
+#  define PEARSON_LEN 256
+#  define PEARSON_MASK 0xFF
+#endif
+
 static union bptable {
-  // BUZ hash table. It should be balanced, like each bit in all the words should
-  // have equal number of ones and zeros.  u32[256] is not really a balanced
+  // BUZ hash table. It should be balanced, each bit in all the words should
+  // have equal number of ones and zeros.  uint[256] is not really a balanced
   // table for LDH input, so it's trimmed down to LDH alphabet.
   struct {
-    u32 table[38], init;
+    uintptr_t table[38], init;
   } buz;
-  // Pearson hash random permutation of bytes for random walk.
-  u8 pearson[256];
+  // Pearson hash random permutation of bytes for random walk. Full byte is
+  // used for both values of PEARSON_LEN to share entropy between BUZ and
+  // Pearson tables while maintaining their invariants to some extent.
+  u8 pearson[PEARSON_LEN];
 } bp;
 
 struct permutel {
@@ -165,91 +177,142 @@ static void bp_init()
 {
   struct permutel permutation[256];
   memset(permutation, 0, sizeof(permutation));
-  for (int i = 0; i < countof(permutation); i++)
+  for (int i = 0; i < countof(permutation); i += 2)
     {
-      permutation[i].index = rand16();
+      u32 rand = rand32();
+      permutation[i].index = rand & 0xFFFF;
       permutation[i].value = i;
+      permutation[i+1].index = rand >> 16;
+      permutation[i+1].value = i+1;
     }
   qsort(permutation, countof(permutation), sizeof(permutation[0]), cmp16);
 
-  u8 filled[sizeof(bp.buz.table)];
+  // Let's initialize Pearson table first.  Meanwhile, the beginning of the BUZ
+  // table is filled with pairs of bytes: value and ~value to keep it balanced.
+  static_assert(sizeof(bp.pearson) < sizeof(bp.buz.table));
+  const ssize_t szptr = sizeof(bp.buz.table[0]);
+  const ssize_t sha_buz = sizeof(bp.pearson) / szptr;
+  u8 filled[sizeof(bp.pearson)];
   memset(filled, 0, sizeof(filled));
-  u8 *pz = (void*)-1;
-  for (u8 out = 0, in = 0; pz; pz = memchr(filled, 0, sizeof(filled)), out = pz - filled)
+  for (int done = 0; done < PEARSON_LEN / 2; done++)
     {
-      /* BUZ table is filled in pairs: value and ~value. */
+      ptrdiff_t out = memchr(filled + done, 0, sizeof(filled) - done) - (void*)filled;
+      int in = 0;
       for (; permutation[in].used; in++)
-	;
-      bp.pearson[out] = permutation[in].value;
-      filled[out] = 1;
-      permutation[in].used = 1;
+	assert(in < countof(permutation));
 
-      const u8 notVal = ~bp.pearson[out];
-      for (in++; notVal != permutation[in].value; in++)
-	;
-      for (out = (rand32() % countof(bp.buz.table)) * 4 + (out % 4); filled[out]; out = (out+4) % sizeof(filled))
+      permutation[in].used = filled[out] = 1;
+      bp.pearson[out] = permutation[in].value;
+
+      const u8 notValue = ~permutation[in].value;
+      for (; permutation[in].value != notValue; in++)
+	assert(in < countof(permutation));
+
+      // Keep offset of the byte within BUZ word.
+      for (out = (rand32() % sha_buz) * szptr + (out % szptr); filled[out]; out = (out + szptr) % sizeof(bp.pearson))
 	;
 
-      /* It's probably not the only way to construct the table that is shared
-       * between BUZ and Pearson hashes, but it's a straightforward one and
-       * the "quality" of the table will be verified with dieharder tests. */
+      permutation[in].used = filled[out] = 1;
       bp.pearson[out] = permutation[in].value;
-      filled[out] = 1;
-      permutation[in].used = 1;
     }
 
-  int count = 0;
-  for (int i = 0; i < countof(permutation); i++)
-    count += permutation[i].used;
-  assert(count == sizeof(bp.buz.table));
+  {
+    int count = 0;
+    for (int i = 0; i < countof(permutation); i++)
+      count += permutation[i].used;
+    assert(count == sizeof(bp.pearson));
+    for (int i = 0; i < PEARSON_LEN; i++)
+      assert(filled[i]);
+    for (int bit = 0; bit < 8 * szptr; bit++)
+      {
+	const uintptr_t mask = ((uintptr_t)1u) << bit;
+	int count = 0;
+	for (int i = 0; i < sha_buz; ++i)
+	  count += !!(bp.buz.table[i] & mask);
+	assert(count == sha_buz / 2);
+      }
+  }
 
-  assert(sizeof(bp.buz.table) == offsetof(union bptable, buz.init));
-
-  for (u8 out = sizeof(bp.buz.table), in = 0; out < sizeof(bp.buz.table) + sizeof(bp.buz.init); out += 2)
+  // Fill the rest of BUZ words.
+  // static_assert is unrolled due to -O0 compilation being unable to expand `const` variables.
+  static_assert(sizeof(bp.buz.table) - sizeof(bp.pearson) == sizeof(bp.buz.table[0]) * 6);
+  memset(bp.buz.table + sha_buz, 0, 6 * szptr);
+  for (int bit = 0; bit < PTRBITS; bit++)
     {
-      for (; permutation[in].used; in++)
-	;
-      assert(bp.pearson[out] == 0);
-      bp.pearson[out] = permutation[in].value;
-      permutation[in].used = 1;
-
-      const int bitsNeeded = 8 - popcount32(bp.pearson[out]);
-      for (in++; permutation[in].used || popcount32(permutation[in].value) != bitsNeeded; in++)
-	;
-      assert(bitsNeeded == popcount32(permutation[in].value));
-
-      assert(bp.pearson[out+1] == 0);
-      bp.pearson[out+1] = permutation[in].value;
-      permutation[in].used = 1;
+      const uintptr_t mask = (uintptr_t)1u << bit;
+      unsigned int a, b, c;
+      u32 r;
+      do { // Unif[1,6]
+	for (r = rand32() | 0xC0000000; r != 3 && ((r&7) == 0 || (r&7) == 7); r >>= 3) ;
+      } while (r == 3);
+      a = r & 7;
+      do {
+	for (r = rand32() | 0xC0000000; r != 3 && ((r&7) == 0 || (r&7) == 7 || (r&7) == a); r >>= 3) ;
+      } while (r == 3);
+      b = r & 7;
+      do {
+	for (r = rand32() | 0xC0000000; r != 3 && ((r&7) == 0 || (r&7) == 7 || (r&7) == a || (r&7) == b); r >>= 3) ;
+      } while (r == 3);
+      c = r & 7;
+      assert(a != b && a != c && b != c);
+      bp.buz.table[sha_buz + a - 1] |= mask;
+      bp.buz.table[sha_buz + b - 1] |= mask;
+      bp.buz.table[sha_buz + c - 1] |= mask;
     }
 
-  count = 0;
-  for (int i = 0; i < countof(permutation); i++)
-    count += permutation[i].used;
-  assert(count == sizeof(bp.buz.table) + sizeof(bp.buz.init));
-
-  // `in` might be optimised as soon as we tend to consume stuff in a sequential order.
-  for (u8 out = sizeof(bp.buz.table) + sizeof(bp.buz.init), in = 0; out != 0; out++)
+  for (int bit = 0; bit < 8 * szptr; bit++)
     {
-      for (; permutation[in].used; in++)
-	;
-      bp.pearson[out] = permutation[in].value;
-      permutation[in].used = 1;
-    }
-
-  for (int i = 0; i < countof(permutation); ++i)
-    assert(permutation[i].used);
-
-  assert(popcount32(bp.buz.init) == 16);
-
-  for (int bit = 0; bit < 32; bit++)
-    {
-      const u32 mask = (1u << bit);
+      const uintptr_t mask = (uintptr_t)1u << bit;
       int count = 0;
       for (int i = 0; i < countof(bp.buz.table); ++i)
 	count += !!(bp.buz.table[i] & mask);
       assert(count == countof(bp.buz.table) / 2);
     }
+
+  // And, finally. buz.init
+  bp.buz.init = randptr();
+  unsigned int count = popcountptr(bp.buz.init);
+  const int shift = sizeof(uintptr_t) == 8 ? 6 : 5;
+  const u32 shmask = (1u << shift) - 1;
+  if (count < sizeof(uintptr_t) * 4)
+    {
+      int todo = sizeof(uintptr_t) * 4 - count;
+      while (todo)
+	{
+	  u32 r = rand32() >> 2;
+	  for (int i = 0; i < 30 / shift && todo; ++i)
+	    {
+	      const int bit = r & shmask;
+	      const uintptr_t need1 = (uintptr_t)1 << bit;
+	      r >>= shift;
+	      if (!(bp.buz.init & need1))
+	      {
+		  bp.buz.init |= need1;
+		  todo--;
+	      }
+	    }
+	}
+    }
+  else if (count > sizeof(uintptr_t) * 4)
+    {
+      int todo = count - sizeof(uintptr_t) * 4;
+      while (todo)
+	{
+	  u32 r = rand32() >> 2;
+	  for (int i = 0; i < 30 / shift && todo; ++i)
+	    {
+	      const int bit = r & shmask;
+	      const uintptr_t need0 = (uintptr_t)1 << bit;
+	      r >>= shift;
+	      if (bp.buz.init & need0)
+	      {
+		  bp.buz.init &= ~need0;
+		  todo--;
+	      }
+	    }
+	}
+    }
+  assert(popcountptr(bp.buz.init) == sizeof(uintptr_t) * 4);
 }
 
 static u8 buz_ldh_map(u8 c)
@@ -270,13 +333,13 @@ static u8 buz_ldh_map(u8 c)
    * to get them special treatment. */
 }
 
-u32 bp_hash(char *name)
+uintptr_t bp_hash(char *name)
 {
-  u32 ret = bp.buz.init;
+  uintptr_t ret = bp.buz.init;
   while (*name)
     {
       const u8 ldh = buz_ldh_map((u8)*name++);
-      ret = ROTATE(ret, 23) ^ bp.buz.table[ldh] ^ bp.pearson[(u8)(ret) ^ ldh];
+      ret = rotleftptr(ret, 23) ^ bp.buz.table[ldh] ^ bp.pearson[((u8)(ret) ^ ldh) & PEARSON_MASK];
     }
   return ret;
 }

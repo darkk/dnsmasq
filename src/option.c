@@ -5994,11 +5994,14 @@ void read_opts(int argc, char **argv, char *compile_opts)
 	    char *last = domain + strlen(domain) - 1; // FIXME: overflow on ""
 	    for (; last >= domain && isspace(*last); last--)
 	      *last = '\0';
-	    u32 hash =
-	      option == LOPT_CACHE_HASH
-	      ? cache_hash_uint(domain)
-	      : bp_hash(domain);
-	    fwrite(&hash, sizeof(hash), 1, stdout);
+	    union { u32 h32; uintptr_t hptr; } u;
+	    const int bp = option == LOPT_BP_HASH;
+	    if (bp)
+	      u.hptr = bp_hash(domain);
+	    else
+	      u.h32 = cache_hash_uint(domain);
+	    if (fwrite(bp ? (void*)&u.hptr : (void*)&u.h32, sizeof(bp ? u.hptr : u.h32), 1, stdout) != 1)
+	      exit(1);
 	  }
 	  exit(0);
 	}

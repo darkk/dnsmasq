@@ -167,6 +167,64 @@ extern int capget(cap_user_header_t header, cap_user_data_t data);
 /* daemon is function in the C library.... */
 #define daemon dnsmasq_daemon
 
+#ifndef PTRBITS
+#  if UINTPTR_MAX == 0XFFFFFFFF
+#    define PTRBITS 32
+#  elif UINTPTR_MAX == 0xFFFFFFFFFFFFFFFF
+#    define PTRBITS 64
+#  else
+#    error uintptr_t is neither 32- not 64-bit per UINTPTR_MAX definition
+#  endif
+#endif /* PTRBITS */
+
+#if PTRBITS == 32
+#  define builtin_rotleftptr __builtin_rotateleft32
+#  define builtin_rotrightptr __builtin_rotateright32
+#elif PTRBITS == 64
+#  define builtin_rotleftptr __builtin_rotateleft64
+#  define builtin_rotrightptr __builtin_rotateright64
+#else
+# error uintptr_t is neither 32- not 64-bit per PTRBITS definition
+#endif
+
+// Generic __builtin_popcountg is clang-19+ and gcc-14+. OpenWRT 23.x SDK is using gcc-12.
+#if UINTPTR_MAX == UINT_MAX
+#  define builtin_popcount_ptr __builtin_popcount
+#elif UINTPTR_MAX == ULONG_MAX
+#  define builtin_popcount_ptr __builtin_popcountl
+#elif UINTPTR_MAX == ULLONG_MAX
+#  define builtin_popcount_ptr __builtin_popcountll
+#endif
+
+#if defined __has_builtin && __has_builtin(builtin_popcount_ptr)
+inline static int popcountptr(uintptr_t p) { return builtin_popcount_ptr(p); }
+#else
+inline static int popcount32(u32 i)
+{
+  i = i - ((i >> 1) & 0x55555555u);
+  i = (i & 0x33333333) + ((i >> 2) & 0x33333333u);
+  i = (i + (i >> 4)) & 0x0F0F0F0Fu;
+  i *= 0x01010101u;
+  return  i >> 24;
+}
+inline static int popcountptr(uintptr_t p)
+{
+#if PTRBITS == 64
+  return popcount32(p & 0xFFFFFFFF) + popcount32(p >> 32);
+#elif PTRBITS == 32
+  return popcount32(p);
+#endif
+}
+#endif
+
+#if defined __has_builtin && __has_builtin(builtin_rotleftptr) && __has_builtin(builtin_rotrightptr)
+inline static uintptr_t rotleftptr(uintptr_t p, int b) { return builtin_rotleftptr(p, b); }
+inline static uintptr_t rotrightptr(uintptr_t p, int b) { return builtin_rotrightptr(p, b); }
+#else
+inline static uintptr_t rotleftptr(uintptr_t p, int b) { return (p << b) | (p >> (PTRBITS - b)); }
+inline static uintptr_t rotrightptr(uintptr_t p, int b) { return (p >> b) | (p << (PTRBITS - b)); }
+#endif
+
 #define ADDRSTRLEN INET6_ADDRSTRLEN
 
 /* Async event queue */
@@ -1500,7 +1558,12 @@ void rand_init(void);
 unsigned short rand16(void);
 u32 rand32(void);
 u64 rand64(void);
-u32 bp_hash(char *name);
+#if PTRBITS == 32
+static inline uintptr_t randptr(void) { return rand32(); }
+#elif PTRBITS == 64
+static inline uintptr_t randptr(void) { return rand64(); }
+#endif
+uintptr_t bp_hash(char *name);
 int rr_on_list(struct rrlist *list, unsigned short rr);
 int legal_hostname(char *name);
 char *canonicalise(char *in, int *nomem);
