@@ -61,7 +61,6 @@ void clear_metrics(void)
     {
       serv->queries = 0;
       serv->failed_queries = 0;
-      serv->failed_queries = 0;
       serv->retrys = 0;
       serv->nxdomain_replies = 0;
       serv->query_latency = 0;
