@@ -148,6 +148,9 @@ HAVE_INOTIFY
 HAVE_GETENTROPY
    use getentropy() call instead of RANDFILE. It is non-standard by widely available.
 
+HAVE_INLINE_QSORT
+   use inlined qsort() implementation instead of libc call.
+
 NO_ID
    Don't report *.bind CHAOS info to clients, forward such requests upstream instead.
 NO_TFTP
@@ -159,6 +162,7 @@ NO_AUTH
 NO_DUMPFILE
 NO_LOOP
 NO_INOTIFY
+NO_INLINE_QSORT
    these are available to explicitly disable compile time options which would 
    otherwise be enabled automatically or which are enabled  by default 
    in the distributed source tree. Building dnsmasq
@@ -192,6 +196,7 @@ RESOLVFILE
 #define HAVE_LOOP
 #define HAVE_DUMPFILE
 #define HAVE_GETENTROPY
+#define HAVE_INLINE_QSORT
 
 /* Build options which require external libraries.
    
@@ -369,6 +374,10 @@ HAVE_SOCKADDR_SA_LEN
 
 #ifdef NO_GETENTROPY
 #undef HAVE_GETENTROPY
+#endif
+
+#ifdef NO_INLINE_QSORT
+#undef HAVE_INLINE_QSORT
 #endif
 
 #if defined (HAVE_LINUX_NETWORK) && !defined(NO_INOTIFY)

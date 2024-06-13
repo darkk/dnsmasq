@@ -195,6 +195,7 @@ static int wormb_order (const void *av, const void *bv)
   const uintptr_t *ap = av;
   const uintptr_t *bp = bv;
 #if 0
+#if 0
   const uintptr_t sortmask = (uintptr_t)ctxv;
   const uintptr_t ah = (ap[0] & sortmask);
   const uintptr_t bh = (bp[0] & sortmask);
@@ -209,6 +210,10 @@ static int wormb_order (const void *av, const void *bv)
     return (ah < bh) ? -1 : 1;
   const struct server *as = (struct server *)ap[1];
   const struct server *bs = (struct server *)bp[1];
+#else
+  const struct server *as = (struct server *)ap[0];
+  const struct server *bs = (struct server *)bp[0];
+#endif
   bench_count(BENCH_SERVCMP_DEREF, 1);
   // TODO: SERV_WILDCARD, SERV_FOR_NODOTS, SERV_LITERAL_ADDRESS etc
   return dneecmp(server_dneedle(as), server_dneedle(bs));
@@ -305,8 +310,10 @@ void bench_mangle(build_server_array) (void)
 
 #if 0
   qsort_arr(wormb_data_begin(w), count, 2 * sizeof(uintptr_t), wormb_order, (void*)sortmask);
-#else
+#elif 0
   qsort(wormb_data_begin(w), count, 2 * sizeof(uintptr_t), wormb_order);
+#else
+  wormb_sort_pairs(w, wormb_order);
 #endif
   bench_step(&bts, "bsa-qsort");
 

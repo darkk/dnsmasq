@@ -1636,6 +1636,12 @@ static inline uintptr_t randptr(void) { return rand64(); }
 unsigned int should_reseed(time_t last, time_t now);
 struct worm_bsearch* wormb_alloc(int partbits, size_t nmemb);
 struct worm_bsearch* wormb_realloc(struct worm_bsearch *w, size_t nmemb);
+#if defined(HAVE_DEVTOOLS) && !defined(HAVE_INLINE_QSORT)
+void qsort_rrr_init();
+#else
+static inline void qsort_rrr_init() { }
+#endif
+void wormb_sort_pairs(struct worm_bsearch *w, int (*cb)(const void*, const void*));
 static inline size_t wormb_npart(struct worm_bsearch *w) { return (size_t)1u << w->partbits; }
 static inline uintptr_t* wormb_data_begin(struct worm_bsearch *w) { return w->tabluint + wormb_npart(w); }
 static inline uintptr_t* wormb_data_end(struct worm_bsearch *w) { return (uintptr_t*)w->tabluint[wormb_npart(w) - 1]; }
