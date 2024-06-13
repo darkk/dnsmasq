@@ -1195,6 +1195,42 @@ int wildcard_matchn(const char* wildcard, const char* match, int num)
   return (!num) || (*wildcard == *match);
 }
 
+#if HAVE_DEVTOOLS
+static int qsort_init_ctx qcomp(const void *av, const void *bv, void *ctx);
+
+static int qsort_init_cmp qcomp(const void *av, const void *bv, void *ctx)
+{
+  const u32 *a = av;
+  const u32 *b = bv;
+  assert((*a ^ *b) == (0x8BADF00D ^ 0xF00DBABE));
+  assert(ctx == qsort_init_ctx);
+  return *a < *b ? -1 : 1;
+}
+
+static int qsort_init_ctx qcomp(const void *av, const void *bv, void *ctx)
+{
+  return qsort_init_cmp(av, bv, ctx);
+}
+
+void qsort_init()
+{
+  u32 arr[2] = { 0x8BADF00D, 0xF00DBABE };
+  qsort_arr(arr, countof(arr), sizeof(arr[0]), qsort_init_cmp, qsort_init_ctx);
+}
+#endif
+
+void qsort_arr(void *base, size_t nmemb, size_t width, qsort_cmp fn, void *ctx)
+{
+
+#if defined(HAVE_QSORT_X_GNU)
+  qsort_r(base, nmemb, width, fn, ctx);
+#elif defined(HAVE_QSORT_X_BSD)
+  qsort_r(base, nmemb, width, ctx, fn);
+#else
+# error Does this platform have qsort_r(), qsort_s() or something alike?...
+#endif
+}
+
 #ifdef HAVE_LINUX_NETWORK
 int kernel_version(void)
 {

@@ -1636,6 +1636,21 @@ int read_write(int fd, unsigned char *packet, int size, int rw);
 void close_fds(long max_fd, int spare1, int spare2, int spare3);
 int wildcard_match(const char* wildcard, const char* match);
 int wildcard_matchn(const char* wildcard, const char* match, int num);
+#if __GLIBC__ || __linux__
+typedef int (*qsort_cmp)(const void *, const void *, void *);
+# define qcomp(a, b, ctx) (a, b, ctx)
+# define HAVE_QSORT_X_GNU
+#else
+typedef int (*qsort_cmp)(void *, const void *, const void *);
+# define qcomp(a, b, ctx) (ctx, a, b)
+# define HAVE_QSORT_X_BSD
+#endif
+#if HAVE_DEVTOOLS
+void qsort_init();
+#else
+inline static void qsort_init() { }
+#endif
+void qsort_arr(void *base, size_t nmemb, size_t width, qsort_cmp fn, void *ctx);
 #ifdef HAVE_LINUX_NETWORK
 int kernel_version(void);
 #endif
