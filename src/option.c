@@ -192,9 +192,15 @@ struct myoption {
 #define LOPT_NO_DHCP4      383
 #define LOPT_MAX_PROCS     384
 #define LOPT_DNSSEC_LIMITS 385
-#define LOPT_CACHE_HASH    386
-#define LOPT_BP_HASH       387
-#define LOPT_RAND32        388
+#define LOPT_RAND32        386
+#define LOPT_CACHE_HASH    387
+#define LOPT_BP_HASH       388
+#define LOPT_STRLENI_HASH  389
+#define LOPT_STRLENP_HASH  390
+#define LOPT_NOPI_HASH     391
+#define LOPT_NOPP_HASH     392
+
+#define LOPT_IS_HASH(x) (LOPT_CACHE_HASH <= (x) && (x) <= LOPT_NOPP_HASH)
 
 #ifdef HAVE_GETOPT_LONG
 static const struct option opts[] =  
@@ -394,6 +400,10 @@ static const struct myoption opts[] =
 #ifdef HAVE_DEVTOOLS
     { "dbg-cache-hash", 0, 0, LOPT_CACHE_HASH },
     { "dbg-bp-hash", 0, 0, LOPT_BP_HASH },
+    { "dbg-strleni-hash", 0, 0, LOPT_STRLENI_HASH },
+    { "dbg-strlenp-hash", 0, 0, LOPT_STRLENP_HASH },
+    { "dbg-nopi-hash", 0, 0, LOPT_NOPI_HASH },
+    { "dbg-nopp-hash", 0, 0, LOPT_NOPP_HASH },
     { "dbg-rand32", 0, 0, LOPT_RAND32 },
 #endif
     { NULL, 0, 0, 0 }
@@ -602,6 +612,10 @@ static struct {
 #ifdef HAVE_DEVTOOLS
   { LOPT_CACHE_HASH, 0, NULL, gettext_noop("Hash STDIN strings with cache_hash_uint()."), NULL },
   { LOPT_BP_HASH, 0, NULL, gettext_noop("Hash STDIN strings with buz_pearson_hash()."), NULL },
+  { LOPT_STRLENI_HASH, 0, NULL, gettext_noop("Hash STDIN strings with (uint_t)strlen()."), NULL },
+  { LOPT_STRLENP_HASH, 0, NULL, gettext_noop("Hash STDIN strings with (uintptr_t)strlen()."), NULL },
+  { LOPT_NOPI_HASH, 0, NULL, gettext_noop("Hash STDIN strings with (uint_t)NOP."), NULL },
+  { LOPT_NOPP_HASH, 0, NULL, gettext_noop("Hash STDIN strings with (uintptr_t)NOP."), NULL },
   { LOPT_RAND32, 0, NULL, gettext_noop("Output stream of rand32() values."), NULL },
 #endif
   { 0, 0, NULL, NULL, NULL }
@@ -5975,9 +5989,11 @@ void read_opts(int argc, char **argv, char *compile_opts)
 	  printf(_("under the terms of the GNU General Public License, version 2 or 3.\n"));
           exit(0);
         }
-#ifdef HAVE_DEVTOOLS
-      else if (option == LOPT_CACHE_HASH || option == LOPT_BP_HASH || option == LOPT_RAND32)
+      else if (DEVTOOLS && (LOPT_IS_HASH(option) || option == LOPT_RAND32))
 	{
+	  // TODO: do I need to set `daemon->options[OPT_DEBUG] = 1` ?
+	  daemon->log_file = "-";
+	  log_start(NULL, -1);
 	  if (isatty(STDOUT_FILENO))
 	    die(_("will not output binary to tty"), NULL, EC_MISC);
 
@@ -5988,24 +6004,61 @@ void read_opts(int argc, char **argv, char *compile_opts)
 	      exit(0);
 	    }
 
+	  int count = 0;
 	  char domain[260]; // TODO: what's the correct size?
+	  unsigned int uint;
+	  uintptr_t ptr;
+	  void *p; size_t sz;
+	  const char *hashret;
+	  switch (option) {
+	    case LOPT_CACHE_HASH:
+	    case LOPT_STRLENI_HASH:
+	    case LOPT_NOPI_HASH:
+	      p = &uint;
+	      sz = sizeof(uint);
+	      hashret = "unsigned int";
+	      break;
+	    case LOPT_BP_HASH:
+	    case LOPT_STRLENP_HASH:
+	    case LOPT_NOPP_HASH:
+	      p = &ptr;
+	      sz = sizeof(ptr);
+	      hashret = "uintptr_t";
+	      break;
+	  }
+	  struct benchts start;
+	  bench_start(&start);
 	  while (fgets(domain, sizeof(domain), stdin))
 	  {
 	    char *last = domain + strlen(domain) - 1; // FIXME: overflow on ""
 	    for (; last >= domain && isspace(*last); last--)
 	      *last = '\0';
-	    union { u32 h32; uintptr_t hptr; } u;
-	    const int bp = option == LOPT_BP_HASH;
-	    if (bp)
-	      u.hptr = bp_hash(domain);
-	    else
-	      u.h32 = cache_hash_uint(domain);
-	    if (fwrite(bp ? (void*)&u.hptr : (void*)&u.h32, sizeof(bp ? u.hptr : u.h32), 1, stdout) != 1)
+	    switch (option) {
+	    case LOPT_CACHE_HASH:   uint = cache_hash_uint(domain); break;
+	    case LOPT_BP_HASH:      ptr = bp_hash(domain); break;
+	    case LOPT_STRLENI_HASH: uint = strlen(domain); break;
+	    case LOPT_STRLENP_HASH: ptr = strlen(domain); break;
+	    case LOPT_NOPI_HASH:    uint = count; break;
+	    case LOPT_NOPP_HASH:    ptr = count; break;
+	    }
+	    if (fwrite(p, sz, 1, stdout) != 1)
 	      exit(1);
+	    count++;
 	  }
+	  bench_loop(BENCH_OPT_DBG_HASH, &start, count);
+	  const char *hashname;
+	  switch (option) {
+	    case LOPT_CACHE_HASH:   hashname = "cache_hash_uint"; break;
+	    case LOPT_BP_HASH:      hashname = "bp_hash"; break;
+	    case LOPT_NOPI_HASH:
+	    case LOPT_NOPP_HASH:    hashname = "NOP"; break;
+	    case LOPT_STRLENI_HASH:
+	    case LOPT_STRLENP_HASH: hashname = "strlen"; break;
+	  }
+	  sprintf(domain, "%s %s()", hashret, hashname);
+	  bench_log(BENCH_OPT_DBG_HASH, domain);
 	  exit(0);
 	}
-#endif
       else if (option == 'C')
 	{
           if (!conffile)

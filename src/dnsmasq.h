@@ -1582,6 +1582,7 @@ int hostname_issubdomain(char *a, char *b);
 time_t dnsmasq_time(void);
 u32 dnsmasq_milliseconds(void);
 enum bench_metrics {
+  BENCH_OPT_DBG_HASH,
   BENCH_DNSMASQ_TIME,
   BENCH_BUILD_SERVER_ARRAY,
   BENCH_LOOKUP_DOMAIN,
