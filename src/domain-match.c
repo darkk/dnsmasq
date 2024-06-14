@@ -109,7 +109,16 @@ static void build_server_array__(void)
    reply of IPv4 or IPV6.
    return 0 if nothing found, 1 otherwise.
 */
+static int lookup_domain__(char *domain, int flags, int *lowout, int *highout);
 int lookup_domain(char *domain, int flags, int *lowout, int *highout)
+{
+  struct benchts start;
+  bench_start(&start);
+  int ret = lookup_domain__(domain, flags, lowout, highout);
+  bench_sample(BENCH_LOOKUP_DOMAIN, &start);
+  return ret;
+}
+static int lookup_domain__(char *domain, int flags, int *lowout, int *highout)
 {
   int rc, crop_query, nodots;
   ssize_t qlen;
