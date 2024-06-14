@@ -1474,6 +1474,7 @@ int hostname_issubdomain(char *a, char *b);
 time_t dnsmasq_time(void);
 u32 dnsmasq_milliseconds(void);
 enum bench_metrics {
+  BENCH_DNSMASQ_TIME,
   BENCH_BUILD_SERVER_ARRAY,
   BENCH_LOOKUP_DOMAIN,
   __BENCH_MAX,
@@ -1498,6 +1499,7 @@ static inline void bench_log(enum bench_metrics, const char *) { }
 static inline void statm_log(const char *) { }
 #endif
 static inline void bench_log_all(void) {
+  bench_log(BENCH_DNSMASQ_TIME, "dnsmasq_time()");
   bench_log(BENCH_BUILD_SERVER_ARRAY, "build_server_array()");
   bench_log(BENCH_LOOKUP_DOMAIN, "lookup_domain()");
   statm_log(NULL);
