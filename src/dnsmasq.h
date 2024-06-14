@@ -1475,6 +1475,7 @@ time_t dnsmasq_time(void);
 u32 dnsmasq_milliseconds(void);
 enum bench_metrics {
   BENCH_BUILD_SERVER_ARRAY,
+  BENCH_LOOKUP_DOMAIN,
   __BENCH_MAX,
 };
 #ifdef HAVE_DEVTOOLS
