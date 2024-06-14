@@ -1909,9 +1909,8 @@ void dump_cache(time_t now)
 {
   struct server *serv, *serv1;
 
-  bench_log(BENCH_BUILD_SERVER_ARRAY, "build_server_array()");
-  bench_log(BENCH_LOOKUP_DOMAIN, "lookup_domain()");
   my_syslog(LOG_INFO, _("time %lu"), (unsigned long)now);
+  bench_log_all();
   my_syslog(LOG_INFO, _("cache size %d, %d/%d cache insertions re-used unexpired cache entries."), 
 	    daemon->cachesize, daemon->metrics[METRIC_DNS_CACHE_LIVE_FREED], daemon->metrics[METRIC_DNS_CACHE_INSERTED]);
   my_syslog(LOG_INFO, _("queries forwarded %u, queries answered locally %u"), 

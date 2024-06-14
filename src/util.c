@@ -470,8 +470,16 @@ int hostname_issubdomain(char *a, char *b)
   return 0;
 }
  
-  
+static time_t dnsmasq_time__(void);
 time_t dnsmasq_time(void)
+{
+  struct benchts start;
+  bench_start(&start);
+  time_t ret = dnsmasq_time__();
+  bench_sample(BENCH_DNSMASQ_TIME, &start);
+  return ret;
+}
+static time_t dnsmasq_time__(void)
 {
 #ifdef HAVE_BROKEN_RTC
   struct timespec ts;
