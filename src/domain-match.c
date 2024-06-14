@@ -23,7 +23,15 @@ static int order_servers(struct server *s, struct server *s2);
 /* If the server is USE_RESOLV or LITERAL_ADDRES, it lives on the local_domains chain. */
 #define SERV_IS_LOCAL (SERV_USE_RESOLV | SERV_LITERAL_ADDRESS)
 
+static void build_server_array__(void);
 void build_server_array(void)
+{
+  struct benchts start;
+  bench_start(&start);
+  build_server_array__();
+  bench_sample(BENCH_BUILD_SERVER_ARRAY, &start);
+}
+static void build_server_array__(void)
 {
   struct server *serv;
   int count = 0;

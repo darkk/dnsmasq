@@ -34,6 +34,10 @@
 #include <sys/utsname.h>
 #endif
 
+#ifdef HAVE_DEVTOOLS
+#include <math.h>
+#endif
+
 /* SURF random number generator */
 
 static u32 seed[32];
@@ -473,6 +477,76 @@ u32 dnsmasq_milliseconds(void)
 
   return (tv.tv_sec) * 1000 + (tv.tv_usec / 1000);
 }
+
+#ifdef HAVE_DEVTOOLS
+struct bench {
+  double monosum, monosq;
+  unsigned int count;
+};
+
+static struct bench bench[__BENCH_MAX];
+
+void bench_start(struct benchts *ts)
+{
+#ifdef CLOCK_MONOTONIC_RAW
+  clockid_t clock = CLOCK_MONOTONIC_RAW;
+#else
+  clockid_t clock = CLOCK_MONOTONIC;
+#endif
+  if (clock_gettime(clock, &ts->mono) < 0)
+    die(_("cannot read monotonic clock for benchmarking: %s"), NULL, EC_MISC);
+}
+
+void bench_sample(enum bench_metrics m, struct benchts *start)
+{
+  struct benchts now;
+  bench_start(&now);
+  double mono = (now.mono.tv_nsec - start->mono.tv_nsec) * 1e-9 + (now.mono.tv_sec - start->mono.tv_sec);
+  bench[m].monosum += mono;
+  bench[m].monosq += mono * mono;
+  bench[m].count++;
+}
+
+void bench_count(enum bench_metrics m, unsigned int count)
+{
+  bench[m].monosum = NAN;
+  bench[m].monosq = NAN;
+  bench[m].count += count;
+}
+
+void bench_loop(enum bench_metrics m, struct benchts *start, unsigned int count)
+{
+  struct benchts now;
+  bench_start(&now);
+  double mono = (now.mono.tv_nsec - start->mono.tv_nsec) * 1e-9 + (now.mono.tv_sec - start->mono.tv_sec);
+  bench[m].monosum += mono;
+  bench[m].monosq = NAN;
+  bench[m].count += count;
+}
+
+void bench_log(enum bench_metrics m, const char *msg)
+{
+  const unsigned int cu = bench[m].count;
+  const double cd = bench[m].count;
+  double monoavg = cu ? (bench[m].monosum / cd) : NAN;
+  double monostdev = (cu > 1 && !isnan(bench[m].monosq))
+    ? sqrt((bench[m].monosq - bench[m].monosum * bench[m].monosum / cd) / (cd - 1))
+    : (cu == 1) ? 0.0 : NAN;
+
+  double scale = monoavg;
+  char *suffix;
+  if (scale < 1e-6) { scale = 1e9; suffix = "ns"; }
+  else if (scale < 1e-3) { scale = 1e6; suffix = "us"; }
+  else if (scale < 1.0) { scale = 1e3; suffix = "ms"; }
+  else { scale = 1.0; suffix = "s"; }
+  if (!isnan(monostdev) && fpclassify(monostdev) != FP_ZERO)
+    my_syslog(LOG_INFO, _("benchmark %s\tCount: %u\tavg %g %s\tstdev %g"), msg, cu, monoavg*scale, suffix, monostdev*scale);
+  else if (!isnan(monoavg))
+    my_syslog(LOG_INFO, _("benchmark %s\tCount: %u\tavg %g %s"), msg, cu, monoavg*scale, suffix);
+  else
+    my_syslog(LOG_INFO, _("benchmark %s\tCount: %u"), msg, cu);
+}
+#endif
 
 int netmask_length(struct in_addr mask)
 {
