@@ -408,6 +408,7 @@ int sa_len(union mysockaddr *addr)
 int hostname_order(const char *a, const char *b)
 {
   unsigned int c1, c2;
+  bench_count(BENCH_HOSTNAME_ORDER, 1);
   
   do {
     c1 = (unsigned char) *a++;

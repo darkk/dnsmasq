@@ -1477,6 +1477,8 @@ enum bench_metrics {
   BENCH_DNSMASQ_TIME,
   BENCH_BUILD_SERVER_ARRAY,
   BENCH_LOOKUP_DOMAIN,
+  BENCH_HOSTNAME_ORDER,
+  BENCH_ORDER_SERVERS,
   __BENCH_MAX,
 };
 #ifdef HAVE_DEVTOOLS
@@ -1500,6 +1502,8 @@ static inline void bench_log_all(void) {
   bench_log(BENCH_DNSMASQ_TIME, "dnsmasq_time()");
   bench_log(BENCH_BUILD_SERVER_ARRAY, "build_server_array()");
   bench_log(BENCH_LOOKUP_DOMAIN, "lookup_domain()");
+  bench_log(BENCH_HOSTNAME_ORDER, "hostname_order()");
+  bench_log(BENCH_ORDER_SERVERS, "order_servers()");
 }
 int netmask_length(struct in_addr mask);
 int is_same_net(struct in_addr a, struct in_addr b, struct in_addr mask);
