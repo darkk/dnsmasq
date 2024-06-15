@@ -663,6 +663,10 @@ static inline char* server_domain(struct server *s) {
    return ((char*)s) + server_offsetof_domain(s->flags);
 }
 
+static inline int server_domain_empty(const struct server *s) {
+  return server_domain(s)[0] == '\0';
+}
+
 struct rebind_domain {
   char *domain;
   struct rebind_domain *next;
