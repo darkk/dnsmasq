@@ -507,6 +507,7 @@ static int order(char *qdomain, size_t qlen, struct server *serv)
 static int order_servers(struct server *s1, struct server *s2)
 {
   int rc;
+  bench_count(BENCH_ORDER_SERVERS, 1);
 
   /* need full comparison of dotless servers in 
      order_qsort() and filter_servers() */
