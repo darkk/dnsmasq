@@ -52,8 +52,9 @@ static int server_bfind_cmp(const void *ctxv, const void *val)
   const uintptr_t *p = val;
   const uintptr_t ctx_masked = ctx->hash & ctx->w.keymask;
   const uintptr_t hash_masked = *p & ctx->w.keymask;
-
   const int log_cmp = 0;
+
+  bench_count(BENCH_SERVCMP_INLINE, 1);
   if (log_cmp) {
     const struct server *useless = worm_unmask(*p, &ctx->w);
     my_syslog(LOG_INFO, "cmp: %s. (%p) <^_^> (%p) %s.", ctx->qdomain, bp_hash(ctx->qdomain), bp_hash(server_domain(useless)), server_domain(useless));
@@ -63,6 +64,7 @@ static int server_bfind_cmp(const void *ctxv, const void *val)
   if (ctx_masked > hash_masked)
     return 1;
 
+  bench_count(BENCH_SERVCMP_DEREF, 1);
   const struct server *s = worm_unmask(*p, &ctx->w);
   const int lobits = MIN(ctzptr(ctx->w.keymask), 16);
   const uintptr_t lomask = ~(UINTPTR_MAX << lobits);
@@ -129,6 +131,7 @@ static int wormb_order qcomp(const void *av, const void *bv, void *ctxv)
   const struct worm_bsearch *w = ctxv;
   const struct server *as = worm_unmask(*au, w); // (const struct server *)(rotleftptr(*au & ~(w->keymask), w->ptrwrotr) ^ w->ptrxor);
   const struct server *bs = worm_unmask(*bu, w); // (const struct server *)(rotleftptr(*bu & ~(w->keymask), w->ptrwrotr) ^ w->ptrxor);
+  bench_count(BENCH_SERVCMP_DEREF, 1);
   uintptr_t ah = as->hash4qsort;
   uintptr_t bh = bs->hash4qsort;
   count_hash += 2;

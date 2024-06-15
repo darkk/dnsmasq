@@ -1688,6 +1688,8 @@ enum bench_metrics {
   BENCH_LOOKUP_DOMAIN,
   BENCH_HOSTNAME_ORDER,
   BENCH_ORDER_SERVERS,
+  BENCH_SERVCMP_INLINE,
+  BENCH_SERVCMP_DEREF,
   __BENCH_MAX,
 };
 #ifdef HAVE_DEVTOOLS
@@ -1715,6 +1717,8 @@ static inline void bench_log_all(void) {
   bench_log(BENCH_LOOKUP_DOMAIN, "lookup_domain()");
   bench_log(BENCH_HOSTNAME_ORDER, "hostname_order()");
   bench_log(BENCH_ORDER_SERVERS, "order_servers()");
+  bench_log(BENCH_SERVCMP_INLINE, "servcmp(pckptr)");
+  bench_log(BENCH_SERVCMP_DEREF, "servcmp(ptr->*)");
   statm_log(NULL);
 }
 int netmask_length(struct in_addr mask);
