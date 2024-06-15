@@ -1479,17 +1479,18 @@ enum bench_metrics {
 };
 #ifdef HAVE_DEVTOOLS
 struct benchts {
-  struct timespec cpu;
   struct timespec mono;
 };
 void bench_start(struct benchts *ts);
 void bench_sample(enum bench_metrics, struct benchts *start);
+void bench_count(enum bench_metrics, unsigned int count);
 void bench_loop(enum bench_metrics, struct benchts *start, unsigned int count);
 void bench_log(enum bench_metrics, const char *msg);
 #else
 struct benchts { int:0; };
 static inline void bench_start(struct benchts *) { }
 static inline void bench_sample(enum bench_metrics, struct benchts *) { }
+static inline void bench_count(enum bench_metrics, unsigned int count) { }
 static inline void bench_loop(enum bench_metrics, struct benchts *, unsigned int) { }
 static inline void bench_log(enum bench_metrics, const char *) { }
 #endif

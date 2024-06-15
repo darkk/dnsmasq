@@ -496,7 +496,6 @@ u32 dnsmasq_milliseconds(void)
 
 #ifdef HAVE_DEVTOOLS
 struct bench {
-  double cpusum, cpusq;
   double monosum, monosq;
   unsigned int count;
 };
@@ -505,34 +504,38 @@ static struct bench bench[__BENCH_MAX];
 
 void bench_start(struct benchts *ts)
 {
-  if (clock_gettime(CLOCK_MONOTONIC, &ts->mono) < 0)
-    die(_("cannot read CLOCK_MONOTONIC clock: %s"), NULL, EC_MISC);
-  if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts->cpu) < 0)
-    die(_("cannot read CLOCK_THREAD_CPUTIME_ID clock: %s"), NULL, EC_MISC);
+#ifdef CLOCK_MONOTONIC_RAW
+  clockid_t clock = CLOCK_MONOTONIC_RAW;
+#else
+  clockid_t clock = CLOCK_MONOTONIC;
+#endif
+  if (clock_gettime(clock, &ts->mono) < 0)
+    die(_("cannot read monotonic clock for benchmarking: %s"), NULL, EC_MISC);
 }
 
 void bench_sample(enum bench_metrics m, struct benchts *start)
 {
   struct benchts now;
   bench_start(&now);
-  double cpu = (now.cpu.tv_nsec - start->cpu.tv_nsec) * 1e-9 + (now.cpu.tv_sec - start->cpu.tv_sec);
   double mono = (now.mono.tv_nsec - start->mono.tv_nsec) * 1e-9 + (now.mono.tv_sec - start->mono.tv_sec);
-  bench[m].cpusum += cpu;
   bench[m].monosum += mono;
-  bench[m].cpusq += cpu * cpu;
   bench[m].monosq += mono * mono;
   bench[m].count++;
+}
+
+void bench_count(enum bench_metrics m, unsigned int count)
+{
+  bench[m].monosum = NAN;
+  bench[m].monosq = NAN;
+  bench[m].count += count;
 }
 
 void bench_loop(enum bench_metrics m, struct benchts *start, unsigned int count)
 {
   struct benchts now;
   bench_start(&now);
-  double cpu = (now.cpu.tv_nsec - start->cpu.tv_nsec) * 1e-9 + (now.cpu.tv_sec - start->cpu.tv_sec);
   double mono = (now.mono.tv_nsec - start->mono.tv_nsec) * 1e-9 + (now.mono.tv_sec - start->mono.tv_sec);
-  bench[m].cpusum += cpu;
   bench[m].monosum += mono;
-  bench[m].cpusq = NAN;
   bench[m].monosq = NAN;
   bench[m].count += count;
 }
@@ -541,26 +544,18 @@ void bench_log(enum bench_metrics m, const char *msg)
 {
   const unsigned int cu = bench[m].count;
   const double cd = bench[m].count;
-  double cpuavg = cu ? (bench[m].cpusum / cd) : NAN;
-  double cpustdev = (cu > 1 && !isnan(bench[m].cpusq))
-    ? sqrt((bench[m].cpusq - bench[m].cpusum * bench[m].cpusum / cd) / (cd - 1))
-    : (cu == 1) ? 0.0 : NAN;
   double monoavg = cu ? (bench[m].monosum / cd) : NAN;
   double monostdev = (cu > 1 && !isnan(bench[m].monosq))
     ? sqrt((bench[m].monosq - bench[m].monosum * bench[m].monosum / cd) / (cd - 1))
     : (cu == 1) ? 0.0 : NAN;
 
-  double scale = MAX(cpuavg, monoavg);
+  double scale = monoavg;
   char *suffix;
   if (scale < 1e-6) { scale = 1e9; suffix = "ns"; }
   else if (scale < 1e-3) { scale = 1e6; suffix = "us"; }
   else if (scale < 1.0) { scale = 1e3; suffix = "ms"; }
   else { scale = 1.0; suffix = "s"; }
-
-  if (isnan(cpustdev) && isnan(monostdev))
-    my_syslog(LOG_INFO, _("benchmark %s\tCount: %u\tCPU: avg %g %s\tTIME: avg %g"), msg, cu, cpuavg*scale, suffix, monoavg*scale);
-  else
-    my_syslog(LOG_INFO, _("benchmark %s\tCount: %u\tCPU: avg %g %s\tstdev %g\tTIME: avg %g\tstdev %g"), msg, cu, cpuavg*scale, suffix, cpustdev*scale, monoavg*scale, monostdev*scale);
+  my_syslog(LOG_INFO, _("benchmark %s\tCount: %u\tavg %g %s\tstdev %g"), msg, cu, monoavg*scale, suffix, monostdev*scale);
 }
 #endif
 
