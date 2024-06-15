@@ -555,7 +555,12 @@ void bench_log(enum bench_metrics m, const char *msg)
   else if (scale < 1e-3) { scale = 1e6; suffix = "us"; }
   else if (scale < 1.0) { scale = 1e3; suffix = "ms"; }
   else { scale = 1.0; suffix = "s"; }
-  my_syslog(LOG_INFO, _("benchmark %s\tCount: %u\tavg %g %s\tstdev %g"), msg, cu, monoavg*scale, suffix, monostdev*scale);
+  if (!isnan(monostdev) && fpclassify(monostdev) != FP_ZERO)
+    my_syslog(LOG_INFO, _("benchmark %s\tCount: %u\tavg %g %s\tstdev %g"), msg, cu, monoavg*scale, suffix, monostdev*scale);
+  else if (!isnan(monoavg))
+    my_syslog(LOG_INFO, _("benchmark %s\tCount: %u\tavg %g %s"), msg, cu, monoavg*scale, suffix);
+  else
+    my_syslog(LOG_INFO, _("benchmark %s\tCount: %u"), msg, cu);
 }
 #endif
 
