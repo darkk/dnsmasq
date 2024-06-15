@@ -367,12 +367,21 @@ HAVE_SOCKADDR_SA_LEN
 #define HAVE_INOTIFY
 #endif
 
+#ifdef HAVE_DEVTOOLS
+# define DEVTOOLS 1
+#else
+# define DEVTOOLS 0
+#endif
+
 /* Define a string indicating which options are in use.
    DNSMASQ_COMPILE_OPTS is only defined in dnsmasq.c */
 
 #ifdef DNSMASQ_COMPILE_OPTS
 
 static char *compile_opts = 
+#ifdef HAVE_DEVTOOLS
+"devtools "
+#endif
 "IPv6 "
 #ifndef HAVE_GETOPT_LONG
 "no-"
