@@ -87,6 +87,8 @@ int main (int argc, char **argv)
   sigact.sa_handler = sig_handler;
   sigact.sa_flags = 0;
   sigemptyset(&sigact.sa_mask);
+  if (DEVTOOLS)
+    sigaction(SIGSEGV, &sigact, NULL);
   sigaction(SIGUSR1, &sigact, NULL);
   sigaction(SIGUSR2, &sigact, NULL);
   sigaction(SIGHUP, &sigact, NULL);
@@ -1301,6 +1303,24 @@ int main (int argc, char **argv)
     }
 }
 
+static void sig_bench_log(int sig)
+{
+  if (!DEVTOOLS)
+    return;
+  // This bench_log_all() is a tribute to an awesome write-up "Delivering
+  // Signals for Fun and Profit" by Michal Zalewski (lcamtuf). It's done at
+  // this point as it's absolutely unsafe to do something on SIGSEGV, but it's
+  // really handy to dump benchmarking statistics right before crash.
+  // "A C program is like a fast dance on a newly waxed dance floor by people
+  // carrying razors."
+  //  - Waldi Ravens.
+  // TODO: factcheck author.
+  if (sig == SIGHUP || sig == SIGTERM || sig == SIGINT || sig == SIGSEGV)
+    bench_log_all();
+  if (sig == SIGSEGV)
+    signal(SIGSEGV, SIG_DFL);
+}
+
 static void sig_handler(int sig)
 {
   if (pid == 0)
@@ -1321,6 +1341,8 @@ static void sig_handler(int sig)
       /* master process */
       int event, errsave = errno;
       
+      sig_bench_log(sig);
+
       if (sig == SIGHUP)
 	event = EVENT_RELOAD;
       else if (sig == SIGCHLD)
