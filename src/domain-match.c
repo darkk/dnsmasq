@@ -244,7 +244,7 @@ int bench_mangle(lookup_domain) (char *domain, int flags, int *lowout, int *high
      A configured server eg server=/lan/ will take precdence. */
   if (nodots &&
       (daemon->serverarray[daemon->serverarraysz-1]->flags & SERV_FOR_NODOTS) &&
-      (nlow == nhigh || daemon->serverarray[nlow]->domain_len == 0))
+      (nlow == nhigh || server_domain_empty(daemon->serverarray[nlow])))
     filter_servers(daemon->serverarraysz-1, flags, &nlow, &nhigh);
   
   if (lowout)
@@ -343,7 +343,7 @@ int filter_servers(int seed, int flags, int *lowout, int *highout)
 			     for a particular domain. */
 			  if ((flags & F_DNSSECOK) && !(daemon->serverarray[nlow]->flags & SERV_DO_DNSSEC))
 			    nlow = nhigh;
-			  else if ((flags & F_DOMAINSRV) && daemon->serverarray[nlow]->domain_len == 0)
+			  else if ((flags & F_DOMAINSRV) && server_domain_empty(daemon->serverarray[nlow]))
 			    nlow = nhigh;
 			  else
 			    nhigh = i;

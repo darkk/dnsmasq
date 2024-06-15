@@ -1599,7 +1599,7 @@ void check_servers(int no_loop_check)
 	  
 	  /* Disable DNSSEC validation when using server=/domain/.... servers
 	     unless there's a configured trust anchor. */
-	  if (strlen(server_domain(serv)) != 0)
+	  if (!server_domain_empty(serv))
 	    {
 	      struct ds_config *ds;
 	      char *domain = server_domain(serv);
@@ -1659,7 +1659,7 @@ void check_servers(int no_loop_check)
       if (++count > SERVERS_LOGGED)
 	continue;
       
-      if (strlen(server_domain(serv)) != 0 || (serv->flags & SERV_FOR_NODOTS))
+      if (!server_domain_empty(serv) || (serv->flags & SERV_FOR_NODOTS))
 	{
 	  char *s1, *s2, *s3 = "", *s4 = "";
 
@@ -1669,7 +1669,7 @@ void check_servers(int no_loop_check)
 #endif
 	  if (serv->flags & SERV_FOR_NODOTS)
 	    s1 = _("unqualified"), s2 = _("names");
-	  else if (strlen(server_domain(serv)) == 0)
+	  else if (server_domain_empty(serv))
 	    s1 = _("default"), s2 = "";
 	  else
 	    s1 = _("domain"), s2 = server_domain(serv), s4 = (serv->flags & SERV_WILDCARD) ? "*" : "";
@@ -1694,7 +1694,7 @@ void check_servers(int no_loop_check)
        
        if ((serv->flags & SERV_LITERAL_ADDRESS) &&
 	   !(serv->flags & (SERV_6ADDR | SERV_4ADDR | SERV_ALL_ZEROS)) &&
-	   strlen(server_domain(serv)))
+	   !server_domain_empty(serv))
 	 {
 	   count--;
 	   if (++locals <= LOCALS_LOGGED)
