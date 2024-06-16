@@ -21,6 +21,8 @@
 
 #define XXH_NO_STREAM
 #include "xxhash.h"
+#include "siphash.h"
+#include "halfsiphash.h"
 
 static volatile int mem_recover = 0;
 static jmp_buf mem_jmp;
@@ -205,8 +207,11 @@ struct myoption {
 #define LOPT_XXH32_HASH    393
 #define LOPT_XXH64_HASH    394
 #define LOPT_XXH3_HASH     395
+#define LOPT_HSIP32_HASH   396
+#define LOPT_HSIP64_HASH   397
+#define LOPT_SIP64_HASH    398
 
-#define LOPT_IS_HASH(x) (LOPT_CACHE_HASH <= (x) && (x) <= LOPT_XXH3_HASH)
+#define LOPT_IS_HASH(x) (LOPT_CACHE_HASH <= (x) && (x) <= LOPT_SIP64_HASH)
 
 #ifdef HAVE_GETOPT_LONG
 static const struct option opts[] =  
@@ -409,6 +414,9 @@ static const struct myoption opts[] =
     { "dbg-xxh32-hash", 0, 0, LOPT_XXH32_HASH },
     { "dbg-xxh64-hash", 0, 0, LOPT_XXH64_HASH },
     { "dbg-xxh3-hash", 0, 0, LOPT_XXH3_HASH },
+    { "dbg-halfsip32-hash", 0, 0, LOPT_HSIP32_HASH },
+    { "dbg-halfsip64-hash", 0, 0, LOPT_HSIP64_HASH },
+    { "dbg-sip64-hash", 0, 0, LOPT_SIP64_HASH },
     { "dbg-strleni-hash", 0, 0, LOPT_STRLENI_HASH },
     { "dbg-strlenp-hash", 0, 0, LOPT_STRLENP_HASH },
     { "dbg-nopi-hash", 0, 0, LOPT_NOPI_HASH },
@@ -6017,6 +6025,14 @@ void read_opts(int argc, char **argv, char *compile_opts)
 	  char domain[260]; // TODO: what's the correct size?
 	  uint32_t seed32 = rand32();
 	  uint64_t seed64 = rand64();
+	  union {
+	    struct {
+	      uint64_t s1, s2;
+	    } i;
+	    u8 c[16];
+	  } seed128;
+	  seed128.i.s1 = rand64();
+	  seed128.i.s2 = rand64();
 	  unsigned int uint;
 	  uint32_t uint32;
 	  uint64_t uint64;
@@ -6032,12 +6048,15 @@ void read_opts(int argc, char **argv, char *compile_opts)
 	      hashret = "unsigned int";
 	      break;
 	    case LOPT_XXH32_HASH:
+	    case LOPT_HSIP32_HASH:
 	      p = &uint32;
 	      sz = sizeof(uint32);
 	      hashret = "uint32_t";
 	      break;
 	    case LOPT_XXH64_HASH:
 	    case LOPT_XXH3_HASH:
+	    case LOPT_HSIP64_HASH:
+	    case LOPT_SIP64_HASH:
 	      p = &uint64;
 	      sz = sizeof(uint64);
 	      hashret = "uint64_t";
@@ -6063,6 +6082,9 @@ void read_opts(int argc, char **argv, char *compile_opts)
 	    case LOPT_XXH32_HASH:   uint32 = XXH32(domain, strlen(domain), seed32); break;
 	    case LOPT_XXH64_HASH:   uint64 = XXH64(domain, strlen(domain), seed64); break;
 	    case LOPT_XXH3_HASH:    uint64 = XXH3_64bits_withSeed(domain, strlen(domain), seed64); break;
+	    case LOPT_HSIP32_HASH:  halfsiphash(domain, strlen(domain), &seed64, (u8*)&uint32, 4); break;
+	    case LOPT_HSIP64_HASH:  halfsiphash(domain, strlen(domain), &seed64, (u8*)&uint64, 8); break;
+	    case LOPT_SIP64_HASH:   siphash(domain, strlen(domain), seed128.c, (u8*)&uint64, 8); break;
 	    case LOPT_STRLENI_HASH: uint = strlen(domain); break;
 	    case LOPT_STRLENP_HASH: ptr = strlen(domain); break;
 	    case LOPT_NOPI_HASH:    uint = count; break;
@@ -6080,6 +6102,9 @@ void read_opts(int argc, char **argv, char *compile_opts)
 	    case LOPT_XXH32_HASH:   hashname = "XXH32"; break;
 	    case LOPT_XXH64_HASH:   hashname = "XXH64"; break;
 	    case LOPT_XXH3_HASH:    hashname = "XXH3_64b"; break;
+	    case LOPT_HSIP32_HASH:  hashname = "halfsiphash(32)"; break;
+	    case LOPT_HSIP64_HASH:  hashname = "halfsiphash(64)"; break;
+	    case LOPT_SIP64_HASH:   hashname = "siphash(64)"; break;
 	    case LOPT_NOPI_HASH:
 	    case LOPT_NOPP_HASH:    hashname = "NOP"; break;
 	    case LOPT_STRLENI_HASH:
