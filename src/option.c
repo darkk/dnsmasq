@@ -19,6 +19,9 @@
 #include "dnsmasq.h"
 #include <setjmp.h>
 
+#define XXH_NO_STREAM
+#include "xxhash.h"
+
 static volatile int mem_recover = 0;
 static jmp_buf mem_jmp;
 static int one_file(char *file, int hard_opt);
@@ -199,8 +202,11 @@ struct myoption {
 #define LOPT_STRLENP_HASH  390
 #define LOPT_NOPI_HASH     391
 #define LOPT_NOPP_HASH     392
+#define LOPT_XXH32_HASH    393
+#define LOPT_XXH64_HASH    394
+#define LOPT_XXH3_HASH     395
 
-#define LOPT_IS_HASH(x) (LOPT_CACHE_HASH <= (x) && (x) <= LOPT_NOPP_HASH)
+#define LOPT_IS_HASH(x) (LOPT_CACHE_HASH <= (x) && (x) <= LOPT_XXH3_HASH)
 
 #ifdef HAVE_GETOPT_LONG
 static const struct option opts[] =  
@@ -400,6 +406,9 @@ static const struct myoption opts[] =
 #ifdef HAVE_DEVTOOLS
     { "dbg-cache-hash", 0, 0, LOPT_CACHE_HASH },
     { "dbg-bp-hash", 0, 0, LOPT_BP_HASH },
+    { "dbg-xxh32-hash", 0, 0, LOPT_XXH32_HASH },
+    { "dbg-xxh64-hash", 0, 0, LOPT_XXH64_HASH },
+    { "dbg-xxh3-hash", 0, 0, LOPT_XXH3_HASH },
     { "dbg-strleni-hash", 0, 0, LOPT_STRLENI_HASH },
     { "dbg-strlenp-hash", 0, 0, LOPT_STRLENP_HASH },
     { "dbg-nopi-hash", 0, 0, LOPT_NOPI_HASH },
@@ -6006,7 +6015,11 @@ void read_opts(int argc, char **argv, char *compile_opts)
 
 	  int count = 0;
 	  char domain[260]; // TODO: what's the correct size?
+	  uint32_t seed32 = rand32();
+	  uint64_t seed64 = rand64();
 	  unsigned int uint;
+	  uint32_t uint32;
+	  uint64_t uint64;
 	  uintptr_t ptr;
 	  void *p; size_t sz;
 	  const char *hashret;
@@ -6017,6 +6030,17 @@ void read_opts(int argc, char **argv, char *compile_opts)
 	      p = &uint;
 	      sz = sizeof(uint);
 	      hashret = "unsigned int";
+	      break;
+	    case LOPT_XXH32_HASH:
+	      p = &uint32;
+	      sz = sizeof(uint32);
+	      hashret = "uint32_t";
+	      break;
+	    case LOPT_XXH64_HASH:
+	    case LOPT_XXH3_HASH:
+	      p = &uint64;
+	      sz = sizeof(uint64);
+	      hashret = "uint64_t";
 	      break;
 	    case LOPT_BP_HASH:
 	    case LOPT_STRLENP_HASH:
@@ -6036,6 +6060,9 @@ void read_opts(int argc, char **argv, char *compile_opts)
 	    switch (option) {
 	    case LOPT_CACHE_HASH:   uint = cache_hash_uint(domain); break;
 	    case LOPT_BP_HASH:      ptr = bp_hash(domain); break;
+	    case LOPT_XXH32_HASH:   uint32 = XXH32(domain, strlen(domain), seed32); break;
+	    case LOPT_XXH64_HASH:   uint64 = XXH64(domain, strlen(domain), seed64); break;
+	    case LOPT_XXH3_HASH:    uint64 = XXH3_64bits_withSeed(domain, strlen(domain), seed64); break;
 	    case LOPT_STRLENI_HASH: uint = strlen(domain); break;
 	    case LOPT_STRLENP_HASH: ptr = strlen(domain); break;
 	    case LOPT_NOPI_HASH:    uint = count; break;
@@ -6050,6 +6077,9 @@ void read_opts(int argc, char **argv, char *compile_opts)
 	  switch (option) {
 	    case LOPT_CACHE_HASH:   hashname = "cache_hash_uint"; break;
 	    case LOPT_BP_HASH:      hashname = "bp_hash"; break;
+	    case LOPT_XXH32_HASH:   hashname = "XXH32"; break;
+	    case LOPT_XXH64_HASH:   hashname = "XXH64"; break;
+	    case LOPT_XXH3_HASH:    hashname = "XXH3_64b"; break;
 	    case LOPT_NOPI_HASH:
 	    case LOPT_NOPP_HASH:    hashname = "NOP"; break;
 	    case LOPT_STRLENI_HASH:
