@@ -84,6 +84,8 @@ static int server_bfind_cmp(const void *ctxv, const void *val)
 
 static size_t server_bfind(struct worm_bsearch *w, uintptr_t hash, const char *qdomain)
 {
+  if (*qdomain == '\0')
+    return w->zero;
   const size_t partition = w->partbits ? (hash >> (PTRBITS - w->partbits)) : 0;
   uintptr_t *table = wormb_data_begin(w);
   uintptr_t *begin = wormb_part_begin(w, partition);
@@ -289,12 +291,15 @@ void bench_mangle(build_server_array) (void)
   struct server **tserv = &daemon->servers;
   struct server **tlocal = &daemon->local_domains;
   size_t i;
+  w->zero = SIZE_MAX;
   for (p = wormb_data_begin(w), i = 0; p != wormb_data_end(w); p++, i++)
     {
       serv = worm_unmask(*p, w);
      //  daemon->serverarray[i] = serv;
       if (server_sizeof(serv->flags) == sizeof(struct server))
 	serv->arrayposn = i;
+      if (w->zero == SIZE_MAX && server_domain_empty(serv))
+	w->zero = i;
       if (partbits)
 	{
 	  size_t partition = serv->hash4qsort >> (PTRBITS - partbits);
