@@ -98,6 +98,43 @@ static size_t server_bfind(struct worm_bsearch *w, uintptr_t hash, const char *q
   return p - table;
 }
 
+static bool server_same_domain(struct worm_bsearch *w, size_t a, size_t b)
+{
+  assert(a < wormb_capacity(w) && b < wormb_capacity(w));
+  const uintptr_t *const begin = wormb_data_begin(w);
+  if ((w->keymask & begin[a]) != (w->keymask & begin[b]))
+    return false;
+
+  // TODO: should I mask domhash16 ?..
+  // const int lobits = MIN(ctzptr(w->keymask), 16);
+  // const uintptr_t lomask = ~(UINTPTR_MAX << lobits);
+
+  const struct server *pa = worm_unmask(begin[a], w);
+  const struct server *pb = worm_unmask(begin[b], w);
+  if (pa->domhash16 != pb->domhash16)
+    return false;
+
+  return hostname_order(server_domain(pa), server_domain(pb)) == 0;
+}
+
+struct server* server_get(struct worm_bsearch *w, size_t n)
+{
+  assert(n < wormb_capacity(w));
+  const uintptr_t *const begin = wormb_data_begin(w);
+  return worm_unmask(begin[n], w);
+}
+
+static bool server_same_group(struct worm_bsearch *w, size_t a, size_t b)
+{
+  if (!server_same_domain(w, a, b))
+    return false;
+  const uintptr_t *const begin = wormb_data_begin(w);
+  const struct server *pa = worm_unmask(begin[a], w);
+  const struct server *pb = worm_unmask(begin[b], w);
+  const uint16_t mask = SERV_WILDCARD | SERV_FOR_NODOTS;
+  return (pa->flags & mask) == (pb->flags & mask);
+}
+
 // `mask` is a bitmask of constant bits in the pointer values for WORM data
 // structure. 16 bits of hash are available in the structure itself in a
 // cacheline far far away so those bits of entropy should be used as the least
@@ -247,8 +284,10 @@ static void build_server_array__(void)
   assert(wormb_data_end(w) - wormb_data_begin(w) == (ptrdiff_t)count);
   qsort_arr(wormb_data_begin(w), count, sizeof(void*), wormb_order, w);
 
+#if 0
   daemon->serverarray = whine_malloc(count * sizeof(void*));
   daemon->serverarraysz = count;
+#endif
 
   // FIXME: server_loops is not handled correctly here
   daemon->servers = daemon->local_domains = NULL;
@@ -258,7 +297,7 @@ static void build_server_array__(void)
   for (p = wormb_data_begin(w), i = 0; p != wormb_data_end(w); p++, i++)
     {
       serv = worm_unmask(*p, w);
-      daemon->serverarray[i] = serv;
+     //  daemon->serverarray[i] = serv;
       if (server_sizeof(serv->flags) == sizeof(struct server))
 	serv->arrayposn = i;
       if (partbits)
@@ -369,7 +408,8 @@ static int lookup_domain__(char *domain, int flags, int *lowout, int *highout)
   char *cp, *qdomain = domain;
 
   /* may be no configured servers. */
-  if (daemon->serverarraysz == 0)
+  // FIXME: no-servers is not supported yet
+  if (wormb_capacity(daemon->serverhash) == 0)
     return 0;
   
   /* find query length and presence of '.' */
@@ -452,7 +492,7 @@ static int lookup_domain__(char *domain, int flags, int *lowout, int *highout)
       {
 	rc = 0;
 	try = ndx;
-	assert(hostname_order(server_domain(daemon->serverarray[ndx]), qdomain) == 0);
+	// assert(hostname_order(server_domain(daemon->serverarray[ndx]), qdomain) == 0);
       }
       else
 	rc = -1;
@@ -466,15 +506,17 @@ static int lookup_domain__(char *domain, int flags, int *lowout, int *highout)
 	      /* if we have example.com and *example.com we need to check against *example.com, 
 		 but the binary search may have found either. Use the fact that example.com is sorted before *example.com
 		 We favour example.com in the case that both match (ie www.example.com) */
-	      while (try != 0 && order(qdomain, qlen, daemon->serverarray[try-1]) == 0)
+	      // FIXME: handle SERV_FOR_NODOTS, it was order()
+	      while (try != 0 && server_same_domain(daemon->serverhash, try, try-1))
 		try--;
 	      
 	      if (!(qdomain == domain || *qdomain == 0 || *(qdomain-1) == '.'))
 		{
-		  while (try < daemon->serverarraysz-1 && order(qdomain, qlen, daemon->serverarray[try+1]) == 0)
+		  // FIXME: handle SERV_FOR_NODOTS, it was order()
+		  while (try < (int)wormb_capacity(daemon->serverhash) - 1 && server_same_domain(daemon->serverhash, try, try+1))
 		    try++;
 		  
-		  if (!(daemon->serverarray[try]->flags & SERV_WILDCARD))
+		  if (!(server_get(daemon->serverhash, try)->flags & SERV_WILDCARD))
 		     found = 0;
 		}
 	    }
@@ -487,7 +529,7 @@ static int lookup_domain__(char *domain, int flags, int *lowout, int *highout)
 	      /* We've matched a setting which says to use servers without a domain.
 		 Continue the search with empty query. We set the F_SERVER flag
 		 so that --address=/#/... doesn't match. */
-	      if (daemon->serverarray[nlow]->flags & SERV_USE_RESOLV)
+	      if (server_get(daemon->serverhash, nlow)->flags & SERV_USE_RESOLV)
 		{
 		  crop_query = qlen;
 		  flags |= F_SERVER;
@@ -514,10 +556,11 @@ static int lookup_domain__(char *domain, int flags, int *lowout, int *highout)
   /* domain has no dots, and we have at least one server configured to handle such,
      These servers always sort to the very end of the array. 
      A configured server eg server=/lan/ will take precdence. */
+  // FIXME: that's now how SERV_FOR_NODOTS works now
   if (nodots &&
-      (daemon->serverarray[daemon->serverarraysz-1]->flags & SERV_FOR_NODOTS) &&
-      (nlow == nhigh || server_domain_empty(daemon->serverarray[nlow])))
-    filter_servers(daemon->serverarraysz-1, flags, &nlow, &nhigh);
+      (server_get(daemon->serverhash, wormb_capacity(daemon->serverhash) - 1)->flags & SERV_FOR_NODOTS) &&
+      (nlow == nhigh || server_domain_empty(server_get(daemon->serverhash, nlow))))
+    filter_servers(wormb_capacity(daemon->serverhash) - 1, flags, &nlow, &nhigh);
   
   if (lowout)
     *lowout = nlow;
@@ -546,10 +589,12 @@ int filter_servers(int seed, int flags, int *lowout, int *highout)
   /* expand nlow and nhigh to cover all the records with the same domain 
      nlow is the first, nhigh - 1 is the last. nlow=nhigh means no servers,
      which can happen below. */
-  while (nlow > 0 && order_servers(daemon->serverarray[nlow-1], daemon->serverarray[nlow]) == 0)
+  // TODO: handle SERV_FOR_NODOTS, it was order_servers()
+  while (nlow > 0 && server_same_group(daemon->serverhash, nlow-1, nlow))
     nlow--;
   
-  while (nhigh < daemon->serverarraysz-1 && order_servers(daemon->serverarray[nhigh], daemon->serverarray[nhigh+1]) == 0)
+  // TODO: handle SERV_FOR_NODOTS, it was order_servers()
+  while (nhigh < (int)wormb_capacity(daemon->serverhash) - 1 && server_same_group(daemon->serverhash, nhigh, nhigh+1))
     nhigh++;
   
   nhigh++;
@@ -558,7 +603,7 @@ int filter_servers(int seed, int flags, int *lowout, int *highout)
     {
       /* We're just lookin for any matches that return an RR. */
       for (i = nlow; i < nhigh; i++)
-	if (daemon->serverarray[i]->flags & SERV_LOCAL_ADDRESS)
+	if (server_get(daemon->serverhash, i)->flags & SERV_LOCAL_ADDRESS)
 	  break;
       
       /* failed, return failure. */
@@ -572,7 +617,7 @@ int filter_servers(int seed, int flags, int *lowout, int *highout)
 	 
 	 See which of those match our query in that priority order and narrow (low, high) */
       
-      for (i = nlow; i < nhigh && ((daemon->serverarray[i]->flags & SERV_ADDR_MASK) == SERV_X_6ADDR); i++);
+      for (i = nlow; i < nhigh && ((server_get(daemon->serverhash, i)->flags & SERV_ADDR_MASK) == SERV_X_6ADDR); i++);
       
       if (!(flags & F_SERVER) && i != nlow && (flags & F_IPV6))
 	nhigh = i;
@@ -580,7 +625,7 @@ int filter_servers(int seed, int flags, int *lowout, int *highout)
 	{
 	  nlow = i;
 	  
-	  for (i = nlow; i < nhigh && ((daemon->serverarray[i]->flags & SERV_ADDR_MASK) == SERV_X_4ADDR); i++);
+	  for (i = nlow; i < nhigh && ((server_get(daemon->serverhash, i)->flags & SERV_ADDR_MASK) == SERV_X_4ADDR); i++);
 	  
 	  if (!(flags & F_SERVER) && i != nlow && (flags & F_IPV4))
 	    nhigh = i;
@@ -588,7 +633,7 @@ int filter_servers(int seed, int flags, int *lowout, int *highout)
 	    {
 	      nlow = i;
 	      
-	      for (i = nlow; i < nhigh && ((daemon->serverarray[i]->flags & SERV_ADDR_MASK) == SERV_X_ZEROS); i++);
+	      for (i = nlow; i < nhigh && ((server_get(daemon->serverhash, i)->flags & SERV_ADDR_MASK) == SERV_X_ZEROS); i++);
 	      
 	      if (!(flags & F_SERVER) && i != nlow && (flags & (F_IPV4 | F_IPV6)))
 		nhigh = i;
@@ -597,23 +642,23 @@ int filter_servers(int seed, int flags, int *lowout, int *highout)
 		  nlow = i;
 		  
 		  /* Short to resolv.conf servers */
-		  for (i = nlow; i < nhigh && (daemon->serverarray[i]->flags & SERV_USE_RESOLV); i++);
+		  for (i = nlow; i < nhigh && (server_get(daemon->serverhash, i)->flags & SERV_USE_RESOLV); i++);
 		  
 		  if (i != nlow)
 		    nhigh = i;
 		  else
 		    {
 		      /* now look for a server */
-		      for (i = nlow; i < nhigh && !(daemon->serverarray[i]->flags & SERV_LITERAL_ADDRESS); i++);
+		      for (i = nlow; i < nhigh && !(server_get(daemon->serverhash, i)->flags & SERV_LITERAL_ADDRESS); i++);
 		      
 		      if (i != nlow)
 			{
 			  /* If we want a server that can do DNSSEC, and this one can't, 
 			     return nothing, similarly if were looking only for a server
 			     for a particular domain. */
-			  if ((flags & F_DNSSECOK) && !(daemon->serverarray[nlow]->flags & SERV_DO_DNSSEC))
+			  if ((flags & F_DNSSECOK) && !(server_get(daemon->serverhash, nlow)->flags & SERV_DO_DNSSEC))
 			    nlow = nhigh;
-			  else if ((flags & F_DOMAINSRV) && server_domain_empty(daemon->serverarray[nlow]))
+			  else if ((flags & F_DOMAINSRV) && server_domain_empty(server_get(daemon->serverhash, nlow)))
 			    nlow = nhigh;
 			  else
 			    nhigh = i;
@@ -641,7 +686,7 @@ int is_local_answer(time_t now, int first, char *name)
   int flags = 0;
   int rc = 0;
   
-  if ((flags = daemon->serverarray[first]->flags) & SERV_LITERAL_ADDRESS)
+  if ((flags = server_get(daemon->serverhash, first)->flags) & SERV_LITERAL_ADDRESS)
     {
       if ((flags & SERV_ADDR_MASK) == SERV_X_4ADDR)
 	rc = F_IPV4;
@@ -655,9 +700,10 @@ int is_local_answer(time_t now, int first, char *name)
 	     now roll back to the server which is just the same domain, to check if that 
 	     provides an answer of a different type. */
 
-	  for (;first > 0 && order_servers(daemon->serverarray[first-1], daemon->serverarray[first]) == 0; first--);
+	  // XXX: handle SERV_FOR_NODOTS, it was order_servers()
+	  for (;first > 0 && server_same_group(daemon->serverhash, first-1, first); first--);
 	  
-	  if ((daemon->serverarray[first]->flags & SERV_LOCAL_ADDRESS) ||
+	  if ((server_get(daemon->serverhash, first)->flags & SERV_LOCAL_ADDRESS) ||
 	      check_for_local_domain(name, now))
 	    rc = F_NOERR;
 	  else
@@ -686,7 +732,7 @@ size_t make_local_answer(int flags, int gotname, size_t size, struct dns_header 
   if (flags & gotname & F_IPV4)
     for (start = first; start != last; start++)
       {
-	struct serv_addr4 *srv = (struct serv_addr4 *)daemon->serverarray[start];
+	struct serv_addr4 *srv = (struct serv_addr4 *)server_get(daemon->serverhash, start);
 
 	if ((srv->flags & SERV_ADDR_MASK) == SERV_X_ZEROS)
 	  memset(&addr, 0, sizeof(addr));
@@ -701,7 +747,7 @@ size_t make_local_answer(int flags, int gotname, size_t size, struct dns_header 
   if (flags & gotname & F_IPV6)
     for (start = first; start != last; start++)
       {
-	struct serv_addr6 *srv = (struct serv_addr6 *)daemon->serverarray[start];
+	struct serv_addr6 *srv = (struct serv_addr6 *)server_get(daemon->serverhash, start);
 
 	if ((srv->flags & SERV_ADDR_MASK) == SERV_X_ZEROS)
 	  memset(&addr, 0, sizeof(addr));
@@ -732,14 +778,14 @@ int dnssec_server(struct server *server, char *keyname, int *firstp, int *lastp)
     return -1;
 
   for (index = first; index != last; index++)
-    if (daemon->serverarray[index] == server)
+    if (server_get(daemon->serverhash, index) == server)
       break;
 	      
   /* No match to server used for original query.
      Use newly looked up set. */
   if (index == last)
-    index =  daemon->serverarray[first]->last_server == -1 ?
-      first : daemon->serverarray[first]->last_server;
+    index =  server_get(daemon->serverhash, first)->last_server == -1 ?
+      first : server_get(daemon->serverhash, first)->last_server;
 
   if (firstp)
     *firstp = first;
