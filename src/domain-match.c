@@ -1088,7 +1088,9 @@ int add_update_server(int flags,
     }
     
   serv->flags = flags;
+#if 0
   serv->domain_len = strlen(server_domain(serv));
+#endif
   
   return 1;
 }
