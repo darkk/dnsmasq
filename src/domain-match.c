@@ -248,7 +248,7 @@ static void build_server_array__(void)
   // Magic number `3` comes from assumption that the machine has 8 (1<<3) pointers per cacheline.
   // Partiion that does nothing to save an extra cachemiss is a total waste of RAM.
   const int maxpartbits = MAX(PTRBITS - clzptr(count) - 3, 0);
-  const int defpartbits = maxpartbits / 2;
+  const int defpartbits = MAX(PTRBITS - clzptr(count) - ((PTRBITS == 64) ? 7 : 6), 0); // ~1 bit per server
   const int config_partbits = -1;
   const int partbits = config_partbits >= 0 ? MIN(config_partbits, maxpartbits) : defpartbits;
   const u8 rotr = bestrotright(ptr0 | ptr1, partbits);
