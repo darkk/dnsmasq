@@ -307,7 +307,7 @@ static int forward_query(int udpfd, union mysockaddr *udpaddr,
       if (flags || ede == EDE_NOT_READY)
 	goto reply;
       
-      master = daemon->serverarray[first];
+      master = server_get(daemon->serverhash, first);
       
       if (!(forward = get_new_frec(now, master, 0)))
 	goto reply;
@@ -406,7 +406,7 @@ static int forward_query(int udpfd, union mysockaddr *udpaddr,
 	  if (!filter_servers(forward->sentto->arrayposn, F_SERVER, &first, &last))
 	    goto reply;
 	  
-	  master = daemon->serverarray[first];
+	  master = server_get(daemon->serverhash, first);
 	  
 	  /* Forward to all available servers on retry of query from same host. */
 	  if (!option_bool(OPT_ORDER) && old_src && !fast_retry)
@@ -494,7 +494,7 @@ static int forward_query(int udpfd, union mysockaddr *udpaddr,
   while (1)
     { 
       int fd;
-      struct server *srv = daemon->serverarray[start];
+      struct server *srv = server_get(daemon->serverhash, start);
       
       if ((fd = allocate_rfd(&forward->rfds, srv)) != -1)
 	{
@@ -1000,7 +1000,7 @@ static void dnssec_validate(struct frec *forward, struct dns_header *header,
 	      /* Make sure we don't expire and free the orig frec during the
 		 allocation of a new one: third arg of get_new_frec() does that. */
 	      if ((serverind = dnssec_server(forward->sentto, daemon->keyname, NULL, NULL)) != -1 &&
-		  (server = daemon->serverarray[serverind]) &&
+		  (server = server_get(daemon->serverhash, serverind)) &&
 		  (nn = dnssec_generate_query(header, ((unsigned char *) header) + server->edns_pktsz,
 					      daemon->keyname, forward->class,
 					      STAT_ISEQUAL(status, STAT_NEED_KEY) ? T_DNSKEY : T_DS, server->edns_pktsz)) && 
@@ -1143,18 +1143,18 @@ void reply_query(int fd, time_t now)
      we may have sent the same query to multiple servers from
      the same local socket, and would like to know which one has answered. */
   for (c = first; c != last; c++)
-    if (sockaddr_isequal(&daemon->serverarray[c]->addr, &serveraddr))
+    if (sockaddr_isequal(&server_get(daemon->serverhash, c)->addr, &serveraddr))
       break;
   
   if (c == last)
     return;
 
-  server = daemon->serverarray[c];
+  server = server_get(daemon->serverhash, c);
 
   if (RCODE(header) != REFUSED)
-    daemon->serverarray[first]->last_server = c;
-  else if (daemon->serverarray[first]->last_server == c)
-    daemon->serverarray[first]->last_server = -1;
+    server_get(daemon->serverhash, first)->last_server = c;
+  else if (server_get(daemon->serverhash, first)->last_server == c)
+    server_get(daemon->serverhash, first)->last_server = -1;
 
   /* If sufficient time has elapsed, try and expand UDP buffer size again. */
   if (difftime(now, server->pktsz_reduced) > UDP_TEST_TIME)
@@ -1955,7 +1955,7 @@ static ssize_t tcp_talk(int first, int last, int start, unsigned char *packet,  
 	    break;
 	}
       
-      serv = daemon->serverarray[start];
+      serv = server_get(daemon->serverhash, start);
       
     retry:
       *length = htons(qsize);
@@ -2004,7 +2004,7 @@ static ssize_t tcp_talk(int first, int last, int start, unsigned char *packet,  
 	      continue;
 	    }
 	  
-	  daemon->serverarray[first]->last_server = start;
+	  server_get(daemon->serverhash, first)->last_server = start;
 	  serv->flags &= ~SERV_GOT_TCP;
 	}
       
@@ -2379,7 +2379,7 @@ unsigned char *tcp_request(int confd, time_t now,
 		
 	      if (!flags && ede != EDE_NOT_READY)
 		{
-		  master = daemon->serverarray[first];
+		  master = server_get(daemon->serverhash, first);
 		  
 		  if (option_bool(OPT_ORDER) || master->last_server == -1)
 		    start = first;
@@ -2983,7 +2983,7 @@ static struct frec *lookup_frec(unsigned short id, int fd, void *hash, int *firs
 	     have different bound sockets. */
 	  for (first = *firstp, last = *lastp; first != last; first++)
 	    {
-	      s = daemon->serverarray[first];
+	      s = server_get(daemon->serverhash, first);
 	      if (s->sfd && s->sfd->fd == fd)
 		return f;
 	    }

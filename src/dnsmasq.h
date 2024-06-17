@@ -111,6 +111,7 @@ typedef unsigned long long u64;
 #include <assert.h>
 #include <stdio.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <string.h>
 #include <stdlib.h>
 #include <fcntl.h>
@@ -1311,10 +1312,9 @@ extern struct daemon {
   char *lease_change_command;
   struct iname *if_names, *if_addrs, *if_except, *dhcp_except, *auth_peers, *tftp_interfaces;
   struct bogus_addr *bogus_addr, *ignore_addr;
-  struct server *servers, *servers_tail, *local_domains, **serverarray /* MARK */;
+  struct server *servers, *servers_tail, *local_domains;
   struct rebind_domain *no_rebind;
   int server_has_wildcard;
-  int serverarraysz;
   struct worm_bsearch *serverhash;
   struct ipsets *ipsets, *nftsets;
   u32 allowlist_mask;
@@ -1608,6 +1608,9 @@ struct worm_bsearch* wormb_alloc(int partbits, size_t nmemb);
 static inline size_t wormb_npart(struct worm_bsearch *w) { return (size_t)1u << w->partbits; }
 static inline uintptr_t* wormb_data_begin(struct worm_bsearch *w) { return w->tabluint + wormb_npart(w); }
 static inline uintptr_t* wormb_data_end(struct worm_bsearch *w) { return (uintptr_t*)w->tabluint[wormb_npart(w) - 1]; }
+static inline size_t wormb_capacity(struct worm_bsearch *w) {
+  return wormb_data_end(w) - wormb_data_begin(w);
+}
 static inline uintptr_t* wormb_part_begin(struct worm_bsearch *w, unsigned int partition) {
   assert(partition < wormb_npart(w));
   return partition ? (uintptr_t*)w->tabluint[partition - 1] : wormb_data_begin(w);
@@ -2113,6 +2116,7 @@ void dump_packet_icmp(int mask, void *packet, size_t len, union mysockaddr *src,
 
 /* domain-match.c */
 void build_server_array(void);
+struct server* server_get(struct worm_bsearch *w, size_t n);
 int lookup_domain(char *qdomain, int flags, int *lowout, int *highout);
 int filter_servers(int seed, int flags, int *lowout, int *highout);
 int is_local_answer(time_t now, int first, char *name);
