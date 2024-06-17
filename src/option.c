@@ -6017,6 +6017,14 @@ void read_opts(int argc, char **argv, char *compile_opts)
 	  printf(_("This software comes with ABSOLUTELY NO WARRANTY.\n"));
 	  printf(_("Dnsmasq is free software, and you are welcome to redistribute it\n"));
 	  printf(_("under the terms of the GNU General Public License, version 2 or 3.\n"));
+	  if (DEVTOOLS)
+	    {
+#define	      printf_szserv(x) do { printf("sizeof(" #x ") == %zu, offsetof(domain) == %zu\n", sizeof(x), offsetof(x, domain)); } while (0)
+	      printf_szserv(struct server);
+	      printf_szserv(struct serv_addr4);
+	      printf_szserv(struct serv_addr6);
+	      printf_szserv(struct serv_local);
+	    }
           exit(0);
         }
       else if (DEVTOOLS && (LOPT_IS_HASH(option) || option == LOPT_RAND32))
