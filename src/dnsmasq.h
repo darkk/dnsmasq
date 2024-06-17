@@ -722,6 +722,7 @@ struct randfd_list {
 struct worm_bsearch {
   uintptr_t ptrxor;
   uintptr_t keymask;
+  size_t zero;
   u8 partbits;     // bits of hash() used to pick partition
   u8 ptrwrotr;     // rotr(ptr ^ ptrxor, ptrrotr) has at least ${keybits} leading zeros
   uintptr_t tabluint[];
