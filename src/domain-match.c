@@ -16,9 +16,11 @@
 
 #include "dnsmasq.h"
 
+#if 0
 static int order(char *qdomain, size_t qlen, struct server *serv);
 static int order_qsort(const void *a, const void *b);
 static int order_servers(struct server *s, struct server *s2);
+#endif
 static struct server* server_alloc(u16 flags, const char *domain);
 
 #ifdef HAVE_LOOP
@@ -563,7 +565,11 @@ int bench_mangle(lookup_domain) (char *domain, int flags, int *lowout, int *high
 /* Return first server in group of equivalent servers; this is the "master" record. */
 int server_samegroup(struct server *a, struct server *b)
 {
-  return order_servers(a, b) == 0;
+  // FIXME: it was (order_servers(a, b) == 0);
+  const uint16_t mask = SERV_WILDCARD | SERV_FOR_NODOTS;
+  return a->domhash16 == b->domhash16
+    && (a->flags & mask) == (b->flags & mask)
+    && hostname_order(server_domain(a), server_domain(b)) == 0;
 }
 
 int filter_servers(int seed, int flags, int *lowout, int *highout)
@@ -782,6 +788,7 @@ int dnssec_server(struct server *server, char *keyname, int *firstp, int *lastp)
 }
 #endif
 
+#if 0
 /* order by size, then by dictionary order */
 static int order(char *qdomain, size_t qlen, struct server *serv)
 {
@@ -849,6 +856,7 @@ static int order_qsort(const void *a, const void *b)
 
   return rc;
 }
+#endif
 
 
 /* When loading large numbers of server=.... lines during startup,
