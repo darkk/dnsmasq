@@ -684,8 +684,7 @@ struct server {
     struct server *next;
     uintptr_t hash4qsort;
   };
-  // FIXME: kill domain_len as a separate bit
-  u16 flags, domain_len, domhash16;
+  u16 flags, domhash16;
   // FIXME: arrayposn is to be changed
   int serial, arrayposn;
   int last_server;
@@ -711,7 +710,7 @@ struct serv_addr4 {
     struct server *next;
     uintptr_t hash4qsort;
   };
-  u16 flags, domain_len, domhash16;
+  u16 flags, domhash16;
   struct in_addr addr;
   char domain[];
 };
@@ -721,7 +720,7 @@ struct serv_addr6 {
     struct server *next;
     uintptr_t hash4qsort;
   };
-  u16 flags, domain_len, domhash16;
+  u16 flags, domhash16;
   struct in6_addr addr;
   char domain[];
 };
@@ -731,7 +730,7 @@ struct serv_local {
     struct server *next;
     uintptr_t hash4qsort;
   };
-  u16 flags, domain_len, domhash16;
+  u16 flags, domhash16;
   char domain[];
 };
 
