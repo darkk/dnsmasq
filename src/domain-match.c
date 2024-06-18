@@ -22,11 +22,325 @@ static int order_qsort(const void *a, const void *b);
 static int order_servers(struct server *s, struct server *s2);
 #endif
 static struct server* server_alloc(u16 flags, const char *domain);
+static void server_free(struct server *serv);
 
 #ifdef HAVE_LOOP
 # define server_loops(serv) (0) // (serv->flags & SERV_LOOP)
 #else
 # define server_loops(serv) (0)
+#endif
+
+// TODO: put SERV_FROM_X_* into separate arena
+struct strint_pad {
+  size_t end;
+  size_t size;
+  size_t allocated;
+  size_t freed;
+  char *pad;
+};
+
+#define STRINT_ARENA_REFCOUNTS (STRINTER_SIZE_MAX ^ (STRINTER_SIZE_MAX >> 1))
+struct strint_arena {
+  strinter_t begin, end;
+  char *mem;
+  strinter_size_t freed;
+};
+
+static inline bool arena_refcounts(const struct strint_arena *ar)
+{
+  return ar->freed & STRINT_ARENA_REFCOUNTS;
+}
+
+static struct strint_pad spad;
+static struct strint_arena *sarar;
+
+strinter_t sarar_lfind_base(strinter_t type, strinter_size_t needed)
+{
+  strinter_t base =
+    (type == STRINTER_PERM) ? STRINTER_PERM :
+    (type == STRINTER_DBUS) ? STRINTER_DBUS :
+    (type == STRINTER_FILE) ? STRINTER_FILE :
+    (assert(false), 0);
+  if (needed && sarar)
+    for (struct strint_arena *ar = sarar; ar->mem; ar++)
+      if ((ar->begin & STRINTER_MASK) == type &&
+	  !((base < ar->begin && base + needed <= ar->begin) ||
+	    (ar->end <= base && ar->end < base + needed)))
+	base = ar->end;
+  assert((base & STRINTER_MASK) == ((base + needed) & STRINTER_MASK) && (base & STRINTER_MASK) == type);
+  return base;
+}
+
+strinter_t strint_scratchpad_add(const char *domain)
+{
+  if (!*domain)
+    return STRINTER_ZEROLEN;
+
+  size_t blen = strlen(domain) + 1;
+  if (spad.end + blen > spad.size)
+    {
+      const size_t oldsz = spad.size;
+      const size_t nextsz = (spad.size + blen * 2) * 2;
+      char *next = whine_realloc(spad.pad, nextsz);
+      if (!next)
+	return 0; // FIXME: SIGNAL ERROR
+      spad.pad = next;
+      spad.size = nextsz;
+      memset(spad.pad + oldsz, 0, nextsz - oldsz);
+    }
+  const strinter_t ret = spad.end | STRINTER_TMP;
+  memcpy(spad.pad + spad.end, domain, blen);
+  spad.end += blen;
+  spad.allocated += blen;
+  return ret;
+}
+
+const char *strint_deref(strinter_t handle)
+{
+  if (handle == STRINTER_ZEROLEN)
+    return "";
+  else if (STRINTER_IS_TMP(handle))
+    return spad.pad + (handle & ~STRINTER_MASK);
+  else
+    for (struct strint_arena *ar = sarar; sarar->mem; ar++)
+      if (ar->begin <= handle && handle < ar->end)
+	return ar->mem + (handle - ar->begin);
+  abort();
+}
+
+struct strint_freezer {
+  strinter_t handle;
+  strinter_size_t posn;
+};
+
+static int strinter_freezer_order(const void* pa, const void *pb)
+{
+  const struct strint_freezer *a = pa, *b = pb;
+  int rc = hostname_order(strint_deref(a->handle), strint_deref(b->handle));
+  return (rc != 0) ? rc : (STRINTER_IS_TMPPERM(b->handle) - STRINTER_IS_TMPPERM(a->handle));
+}
+
+static int strinter_freezer_pos(const void* pa, const void *pb)
+{
+  const struct strint_freezer *a = pa, *b = pb;
+  return (strinter_ssize_t)a->posn - (strinter_ssize_t)b->posn;
+}
+
+unsigned int sarar_len()
+{
+  if (!sarar)
+    return 0;
+  unsigned int i = 0;
+  while (sarar[i].mem)
+    i++;
+  return i;
+}
+
+void strint_scratchpad_freeze(struct strint_freezer *permut, strinter_size_t nmemb)
+{
+  for (strinter_size_t i = 0; i < nmemb; ++i)
+    permut[i].posn = i;
+  // Skiping duplicates as the following configurations are meaningful:
+  // 1) --address=/example.com/1.2.3.4   --local=/example.com/
+  // 2) --server=/example.org/192.0.2.53 --ipset=/example.org/PolicySet
+  qsort(permut, nmemb, sizeof(permut[0]), strinter_freezer_order);
+
+  const char *last_perm = NULL;
+  size_t perm = 0, dbus = 0, file = 0;
+  strinter_size_t cntperm = 0, cntdbus = 0, cntfile = 0;
+  int refdbus = 0, reffile = 0; // reference counters are needed iff duplicates exist
+  for (strinter_size_t i = 0; i < nmemb; ++i)
+    {
+      const strinter_t handle = permut[i].handle;
+      if (handle == STRINTER_ZEROLEN)
+	continue;
+      assert(STRINTER_IS_TMP(handle));
+      const char *str = strint_deref(handle);
+      if (last_perm && strcmp(str, last_perm) == 0)
+	continue;
+      size_t blen = strlen(str) + 1;
+      if (STRINTER_IS_TMPPERM(handle))
+	perm += blen, cntperm++, last_perm = str;
+      else
+	{
+	  assert(STRINTER_IS_TMPDBUS(handle) || STRINTER_IS_TMPFILE(handle));
+	  const strinter_t type = handle & STRINTER_TMPMASK;
+	  int *pref; size_t *psz; strinter_size_t *pcnt;
+	  if (type == STRINTER_TMPDBUS)
+	    pref = &refdbus, psz = &dbus, pcnt = &cntdbus;
+	  else
+	    pref = &reffile, psz = &file, pcnt = &cntfile;
+	  if (i > 0 &&
+	      (permut[i-1].handle & STRINTER_TMPMASK) == type &&
+	      strcmp(str, strint_deref(permut[i-1].handle)) == 0
+	  ) {
+	      *pref = 1;
+	      continue;
+	    }
+	  *psz += blen;
+	  *pcnt += 1;
+	}
+    }
+
+  const strinter_t needperm = perm;
+  const strinter_t needdbus = dbus + refdbus * cntdbus;
+  const strinter_t needfile = file + reffile * cntfile;
+  strinter_t off[] = {
+    [STRINTER_2NDX(STRINTER_PERM)] = sarar_lfind_base(STRINTER_PERM, needperm),
+    [STRINTER_2NDX(STRINTER_DBUS)] = sarar_lfind_base(STRINTER_DBUS, needdbus),
+    [STRINTER_2NDX(STRINTER_FILE)] = sarar_lfind_base(STRINTER_FILE, needfile),
+  };
+
+  struct strint_arena newar[] = {{
+    .begin = off[STRINTER_2NDX(STRINTER_PERM)],
+    .end = off[STRINTER_2NDX(STRINTER_PERM)] + needperm,
+    .mem = needperm ? whine_malloc(needperm) : NULL,
+    .freed = 0
+  }, {
+    .begin = off[STRINTER_2NDX(STRINTER_DBUS)],
+    .end = off[STRINTER_2NDX(STRINTER_DBUS)] + needdbus,
+    .mem = needdbus ? whine_malloc(needdbus) : NULL,
+    .freed = refdbus ? STRINT_ARENA_REFCOUNTS : 0
+  }, {
+    .begin = off[STRINTER_2NDX(STRINTER_FILE)],
+    .end = off[STRINTER_2NDX(STRINTER_FILE)] + needfile,
+    .mem = needfile ? whine_malloc(needfile) : NULL,
+    .freed = reffile ? STRINT_ARENA_REFCOUNTS : 0
+  }};
+
+  for (int i = 0; i < countof(newar); ++i)
+    if (newar[i].begin != newar[i].end && newar[i].mem == NULL)
+      {
+	for (int i = 0; i < countof(newar); ++i)
+	  free(newar[i].mem);
+	return; // TODO: signal FAILURE;
+      }
+
+  last_perm = NULL;
+  strinter_t last_permhandle = STRINTER_ZEROLEN, last_handle = STRINTER_TMP;
+  const char *last_str = 0;
+  for (strinter_size_t i = 0; i < nmemb; ++i)
+    {
+      const strinter_t handle = permut[i].handle;
+      if (handle == STRINTER_ZEROLEN)
+	continue;
+      const strinter_t artype = (handle & STRINTER_TMPMASK) << 2;
+      const int arndx = artype >> (UINT_WIDTH - 2);
+      const char *str = strint_deref(handle);
+
+      if (last_perm && strcmp(str, last_perm) == 0)
+	{
+	  permut[i].handle = last_permhandle;
+	  continue;
+	}
+
+      if ((last_handle & STRINTER_MASK) == artype && strcmp(last_str, str) == 0)
+	{
+	  assert((artype == STRINTER_DBUS || artype == STRINTER_FILE) && arena_refcounts(&newar[arndx]));
+	  permut[i].handle = last_handle;
+	  *(unsigned char *)(last_str - 1) += 1;
+	  assert((unsigned char)last_str[-1] != UCHAR_MAX);
+	  // TODO: well, user may have their reasons to have 250 copies of string, let's save it twice in that case.
+	  continue;
+	}
+
+      size_t blen = strlen(str) + 1;
+      struct strint_arena *ar = &newar[arndx];
+      assert(ar->mem);
+      size_t memoff = off[arndx] - ar->begin;
+
+      if (arena_refcounts(ar))
+	ar->mem[memoff] = 1, memoff++, off[arndx]++;
+
+      memcpy(ar->mem + memoff, str, blen);
+      off[arndx] += blen;
+
+      last_handle = ar->begin + memoff;
+      last_str = ar->mem + memoff;
+      assert(last_handle < ar->end);
+      permut[i].handle = last_handle;
+    }
+
+  unsigned int newarsz = !!newar[0].mem + !!newar[1].mem + !!newar[2].mem;
+  if (newarsz)
+    {
+      size_t old_blen = (sarar ? (sarar_len() + 1) : 0) * sizeof(sarar[0]);
+      size_t new_blen = (sarar_len() + newarsz + 1) * sizeof(sarar[0]);
+      sarar = whine_realloc(sarar, new_blen);
+      memset(((void*)sarar) + old_blen, 0, new_blen - old_blen);
+      if (!sarar)
+	abort();
+      int i = sarar_len();
+      if (newar[0].mem)
+	sarar[i] = newar[0], i++;
+      if (newar[1].mem)
+	sarar[i] = newar[1], i++;
+      if (newar[2].mem)
+	sarar[i] = newar[2], i++;
+      memset(sarar + i, 0, sizeof(sarar[0]));
+    }
+
+  qsort(permut, nmemb, sizeof(permut[0]), strinter_freezer_pos);
+}
+
+void strint_scratchpad_free(strinter_t handle)
+{
+  if (handle == STRINTER_ZEROLEN)
+    return;
+  char *s = (char *)strint_deref(handle);
+  assert(*s && "it's double-free");
+  size_t blen = strlen(s);
+  spad.freed += blen + 1;
+  memset(s, 0, blen);
+  if (spad.allocated == spad.freed && spad.pad)
+    {
+      my_syslog(LOG_INFO, "spad.allocated: %zu, spad.freed: %zu, spad.size: %zu", spad.allocated, spad.freed, spad.size);
+      assert(spad.pad[spad.size - 1] == '\0');
+      // FIXME: assert that it's zero
+      // spad.pad[spad.size - 1] = '@';
+      // assert(rawmemchr(spad.pad, '@') == spad.pad + spad.size - 1);
+      free(spad.pad);
+      memset(&spad, 0, sizeof(spad));
+    }
+}
+
+#if 0
+const char* strint_scratchpad_flush();
+struct strint_arena_ctx {
+  char *arena;
+  size_t size;
+  const char *domain;
+};
+
+int strint_arena_lookup(const void *pctx, const void * const px)
+{
+  const struct strint_arena_ctx *ctx = pctx;
+  const char *x = px;
+  assert(ctx->arena <= x && x < ctx->arena + ctx->size);
+  while (*x && x >= ctx->arena)
+    x--;
+  if (!*x)
+    x++;
+  x++; // skip refcounter
+  int rc = hostname_order(ctx->domain, x);
+  if (rc != 0)
+    return rc;
+  return (const void*)x - px; // px - x?
+}
+
+bool strint_is_interned(const char *domain)
+{
+  if (!*domain)
+    return true;
+  for (struct strint_arena *ar = sarlist; ar; ar = ar->next)
+    {
+      struct strint_arena_ctx ctx = { .arena = ar->arena, .size = ar->size, .domain = domain };
+      uintptr_t *p = bsearch(&ctx, ar->arena, ar->size, sizeof(char), strint_arena_lookup);
+      if (p)
+	return true;
+    }
+  return false;
+}
 #endif
 
 static inline uintptr_t worm_mask(void* ptr, uintptr_t key, const struct worm_bsearch *w)
@@ -89,13 +403,13 @@ static size_t server_bfind(struct worm_bsearch *w, uintptr_t hash, const char *q
   const size_t partition = w->partbits ? (hash >> (PTRBITS - w->partbits)) : 0;
   uintptr_t *table = wormb_data_begin(w);
   uintptr_t *begin = wormb_part_begin(w, partition);
-  size_t nelem = wormb_part_end(w, partition) - begin;
+  size_t nmemb = wormb_part_end(w, partition) - begin;
 
   struct serv_bfind_ctx ctx;
   memcpy(&ctx.w, w, sizeof(*w));
   ctx.hash = hash;
   ctx.qdomain = qdomain;
-  uintptr_t *p = bsearch(&ctx, begin, nelem, sizeof(void*), server_bfind_cmp);
+  uintptr_t *p = bsearch(&ctx, begin, nmemb, sizeof(void*), server_bfind_cmp);
   if (!p)
     return SIZE_MAX;
   assert(hostname_order(server_domain(worm_unmask(*p, w)), qdomain) == 0);
@@ -921,7 +1235,7 @@ void mark_servers(int flag)
 	  {
 	    *up = next;
 	    // free(serv->domain);
-	    free(serv);
+	    server_free(serv);
 	  }
 	else 
 	  up = &serv->next;
@@ -941,7 +1255,7 @@ void cleanup_servers(void)
          server_gone(serv);
          *up = serv->next;
 	 // free(serv->domain);
-	 free(serv);
+	 server_free(serv);
        }
       else 
 	{
@@ -949,6 +1263,54 @@ void cleanup_servers(void)
 	  daemon->servers_tail = serv;
 	}
     }
+
+  size_t l = 0, count = 0;
+  for (serv = daemon->servers; serv; serv = serv->next)
+    {
+      const char *d = server_domain(serv);
+      l += strlen(d) + 1;
+      // serv->domi = strint_scratchpad_add(d);
+      count++;
+    }
+  for (serv = daemon->local_domains; serv; serv = serv->next)
+    {
+      const char *d = server_domain(serv);
+      l += strlen(d) + 1;
+      // serv->domi = strint_scratchpad_add(d);
+      count++;
+    }
+  my_syslog(LOG_INFO, "%zu bytes for %zu domains", l, count);
+
+  struct strint_freezer *permut = whine_malloc(sizeof(struct strint_freezer) * count);
+  l = 0;
+  for (serv = daemon->servers; serv; serv = serv->next, l++)
+    permut[l].handle = serv->domi;
+  for (serv = daemon->local_domains; serv; serv = serv->next, l++)
+    permut[l].handle = serv->domi;
+
+  strint_scratchpad_freeze(permut, l);
+
+  l = 0;
+  for (serv = daemon->servers; serv; serv = serv->next, l++)
+    strint_scratchpad_free(serv->domi), serv->domi = permut[l].handle;
+  for (serv = daemon->local_domains; serv; serv = serv->next, l++)
+    strint_scratchpad_free(serv->domi), serv->domi = permut[l].handle;
+
+  my_syslog(LOG_INFO, "spad.allocated: %zu, spad.freed: %zu, spad.size: %zu", spad.allocated, spad.freed, spad.size);
+}
+
+static void server_free(struct server *serv)
+{
+  const size_t servsz = server_sizeof(serv->flags);
+  switch (servsz) {
+  case sizeof(struct serv_local):
+  case sizeof(struct serv_addr4):
+  case sizeof(struct serv_addr6):
+    tiny_free(serv, servsz);
+    break;
+  case sizeof(struct server):
+    free(serv);
+  }
 }
 
 static struct server* server_alloc(u16 flags, const char *domain)
@@ -963,8 +1325,32 @@ static struct server* server_alloc(u16 flags, const char *domain)
     domain++;
 
   const size_t servsz = server_sizeof(flags);
-  const size_t domoff = server_offsetof_domain(flags);
   struct server *ret = NULL;
+  switch (servsz) {
+  case sizeof(struct serv_local):
+  case sizeof(struct serv_addr4):
+  case sizeof(struct serv_addr6):
+    ret = tiny_malloc(servsz);
+    break;
+  case sizeof(struct server):
+    ret = whine_malloc(servsz);
+  }
+  if (!ret)
+    return NULL;
+  ret->flags = flags;
+
+  if (*domain != 0)
+    {
+      char *alloc_domain = canonicalise((char *)domain, NULL);
+      if (!alloc_domain)
+	abort();
+      ret->domi = strint_scratchpad_add(alloc_domain);
+      free(alloc_domain);
+    }
+  else
+    ret->domi = strint_scratchpad_add("");
+#if 0
+  const size_t domoff = server_offsetof_domain(flags);
 
   if (*domain != 0)
     {
@@ -993,6 +1379,7 @@ static struct server* server_alloc(u16 flags, const char *domain)
       ret->flags = flags;
       memcpy(server_domain(ret), domain, domsz);
     }
+#endif
   return ret;
 }
 
@@ -1061,7 +1448,7 @@ int add_update_server(int flags,
       
       if (serv)
 	{
-	  free(alloc_serv);
+	  server_free(alloc_serv);
 	  alloc_serv = NULL;
 	}
       else

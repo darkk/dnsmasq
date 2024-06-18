@@ -183,9 +183,11 @@ extern int capget(cap_user_header_t header, cap_user_data_t data);
 #if PTRBITS == 32
 #  define builtin_rotleftptr __builtin_rotateleft32
 #  define builtin_rotrightptr __builtin_rotateright32
+#  define UINTPTR_C(c) UINT32_C(c)
 #elif PTRBITS == 64
 #  define builtin_rotleftptr __builtin_rotateleft64
 #  define builtin_rotrightptr __builtin_rotateright64
+#  define UINTPTR_C(c) UINT64_C(c)
 #else
 # error uintptr_t is neither 32- not 64-bit per PTRBITS definition
 #endif
@@ -728,12 +730,45 @@ struct worm_bsearch {
   uintptr_t tabluint[];
 };
 
+#ifndef UINT_WIDTH
+# if UINT_MAX == 0xFFFFFFFFU
+#   define UINT_WIDTH 32
+# else
+#   error Non 32-bit uint?
+# endif
+#endif
+
+typedef unsigned int strinter_t;
+typedef unsigned int strinter_size_t;
+typedef int strinter_ssize_t;
+#define STRINTER_SIZE_MAX UINT_MAX
+#define STRINTER_PERM    (0)
+#define STRINTER_DBUS    (1u << (UINT_WIDTH - 2))
+#define STRINTER_FILE    (2u << (UINT_WIDTH - 2))
+#define STRINTER_TMP     (3u << (UINT_WIDTH - 2))
+#define STRINTER_MASK    (3u << (UINT_WIDTH - 2))
+#define STRINTER_2NDX(x) ((x) >> (UINT_WIDTH - 2))
+#define STRINTER_TMPPERM ((3u << (UINT_WIDTH - 2)) | (0))
+#define STRINTER_TMPDBUS ((3u << (UINT_WIDTH - 2)) | (1u << (UINT_WIDTH - 4)))
+#define STRINTER_TMPFILE ((3u << (UINT_WIDTH - 2)) | (2u << (UINT_WIDTH - 4)))
+#define STRINTER_TMPMASK (0xFu << (UINT_WIDTH - 4))
+#define STRINTER_ZEROLEN UINT_MAX // handle for ""
+#define STRINTER_MAX     UINT_MAX
+#define STRINTER_IS_PERM(x)    (((x) & STRINTER_MASK) == STRINTER_PERM)
+#define STRINTER_IS_DBUS(x)    (((x) & STRINTER_MASK) == STRINTER_DBUS)
+#define STRINTER_IS_FILE(x)    (((x) & STRINTER_MASK) == STRINTER_FILE)
+#define STRINTER_IS_TMP(x)     (((x) & STRINTER_MASK) == STRINTER_TMP)
+#define STRINTER_IS_TMPPERM(x) (((x) & STRINTER_TMPMASK) == STRINTER_TMPPERM)
+#define STRINTER_IS_TMPDBUS(x) (((x) & STRINTER_TMPMASK) == STRINTER_TMPDBUS)
+#define STRINTER_IS_TMPFILE(x) (((x) & STRINTER_TMPMASK) == STRINTER_TMPFILE)
+
 struct server {
   union {
     struct server *next;
     uintptr_t hash4qsort;
   };
   u16 flags, domhash16;
+  strinter_t domi;
   // FIXME: arrayposn is to be changed
   int serial, arrayposn;
   int last_server;
@@ -750,7 +785,7 @@ struct server {
 #ifdef HAVE_LOOP
   u32 uid;
 #endif
-  char domain[];
+  // char domain[];
 };
 
 /* First three fields must match struct server in next three definitions.. */
@@ -760,8 +795,9 @@ struct serv_addr4 {
     uintptr_t hash4qsort;
   };
   u16 flags, domhash16;
+  strinter_t domi;
   struct in_addr addr;
-  char domain[];
+  // char domain[];
 };
 
 struct serv_addr6 {
@@ -770,8 +806,9 @@ struct serv_addr6 {
     uintptr_t hash4qsort;
   };
   u16 flags, domhash16;
+  strinter_t domi;
   struct in6_addr addr;
-  char domain[];
+  // char domain[];
 };
 
 struct serv_local {
@@ -780,7 +817,8 @@ struct serv_local {
     uintptr_t hash4qsort;
   };
   u16 flags, domhash16;
-  char domain[];
+  strinter_t domi;
+  // char domain[];
 };
 
 static inline size_t server_sizeof(u16 flags)
@@ -796,6 +834,7 @@ static inline size_t server_sizeof(u16 flags)
     : sizeof(struct serv_local);
 }
 
+#if 0
 static inline size_t server_offsetof_domain(u16 flags)
 {
   return
@@ -807,9 +846,16 @@ static inline size_t server_offsetof_domain(u16 flags)
     ? offsetof(struct serv_addr4, domain)
     : offsetof(struct serv_local, domain);
 }
+#endif
+
+const char *strint_deref(strinter_t handle);
 
 static inline /* const */ char* server_domain(const struct server *s) {
+#if 0
    return ((/* const */ char*)s) + server_offsetof_domain(s->flags);
+#else
+   return (char*)strint_deref(s->domi);
+#endif
 }
 
 static inline int server_domain_empty(const struct server *s) {
@@ -1676,6 +1722,9 @@ void safe_strncpy(char *dest, const char *src, size_t size);
 void safe_pipe(int *fd, int read_noblock);
 void *whine_malloc(size_t size);
 void *whine_realloc(void *ptr, size_t size);
+void tiny_malloc_init(const u8 *size, u8 count);
+void *tiny_malloc(u8 size);
+void tiny_free(void *obj, u8 size);
 int sa_len(union mysockaddr *addr);
 int sockaddr_isequal(const union mysockaddr *s1, const union mysockaddr *s2);
 int sockaddr_isnull(const union mysockaddr *s);

@@ -24,6 +24,8 @@
 #include <locale.h>
 #endif
 
+#include <stdalign.h>
+
 struct daemon *daemon;
 
 static volatile pid_t pid = 0;
@@ -105,6 +107,15 @@ int main (int argc, char **argv)
 
   rand_init(); /* Must precede read_opts() */
   qsort_init();
+  const u8 arenas[] = {
+    sizeof(struct serv_local),
+    sizeof(struct serv_addr4),
+    sizeof(struct serv_addr6),
+  };
+  static_assert(alignof(struct serv_local) == alignof(uintptr_t));
+  static_assert(alignof(struct serv_addr4) == alignof(uintptr_t));
+  static_assert(alignof(struct serv_addr6) == alignof(uintptr_t));
+  tiny_malloc_init(arenas, countof(arenas));
   
   read_opts(argc, argv, compile_opts);
  

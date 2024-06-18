@@ -38,6 +38,8 @@
 #include <math.h>
 #endif
 
+#include <malloc.h>
+
 static void bp_init();
 
 /* SURF random number generator */
@@ -578,6 +580,116 @@ void safe_pipe(int *fd, int read_noblock)
       !fix_fd(fd[1]) ||
       (read_noblock && !fix_fd(fd[0])))
     die(_("cannot create pipe: %s"), NULL, EC_MISC);
+}
+
+struct tmarena {
+  uintptr_t **chunk; // each chunk is PTRBITS of ${objsz}-byte objects
+  uint32_t chunksz;
+  uint32_t allocated;
+  uint32_t free_hint;
+  u8 objsz;
+  u8 chunks_unused;
+};
+
+static struct tmarena *tmars;
+static unsigned int tmarssz;
+
+void tiny_malloc_init(const u8 *size, u8 count)
+{
+  assert(!tmars);
+  tmars = safe_malloc(sizeof(struct tmarena) * count);
+  for (int i = 0; i < count; i++)
+    tmars[i].objsz = size[i];
+  tmarssz = count;
+}
+
+static int ptrcmp_qsort(const void *pa, const void *pb)
+{
+  const uintptr_t *a = pa, *b = pb;
+  return (ptrdiff_t)(*a - *b);
+}
+
+void *tiny_malloc(u8 size)
+{
+  struct tmarena *ar = NULL;
+  for (unsigned int i = 0; i < tmarssz && !ar; ++i)
+    if (tmars[i].objsz == size)
+      ar = tmars + i;
+  if (!ar)
+    return NULL;
+
+  if (ar->allocated == ar->chunksz * PTRBITS)
+    {
+      if (ar->chunks_unused == 0)
+	{
+	  u8 chunks_unused = (ar->chunksz >= 16) ? 16 : 4;
+	  uintptr_t **c = whine_realloc(ar->chunk, (ar->chunksz + chunks_unused) * sizeof(uintptr_t));
+	  if (!c)
+	    return NULL;
+	  ar->chunk = c;
+	  ar->chunks_unused = chunks_unused;
+	}
+      uintptr_t *ch = whine_malloc(sizeof(uintptr_t) + PTRBITS * ar->objsz);
+      if (!ch)
+	return NULL;
+      // my_syslog(LOG_INFO, "requested: %zu, got: %zu", sizeof(uintptr_t) + PTRBITS * ar->objsz, malloc_usable_size(ch));
+      ar->chunk[ar->chunksz] = ch;
+      ar->chunks_unused--;
+      ar->chunksz++;
+      qsort(ar->chunk, ar->chunksz, sizeof(ar->chunk[0]), ptrcmp_qsort);
+      uintptr_t free_hint = 0;
+      while (ar->chunk[free_hint] != ch)
+	free_hint++;
+      ar->free_hint = free_hint;
+    }
+
+  if (ar->free_hint == UINT_MAX)
+    {
+      ar->free_hint = 0;
+      while (ar->chunk[ar->free_hint][0] == UINTPTR_MAX)
+	ar->free_hint++;
+      assert(ar->free_hint < ar->chunksz);
+    }
+
+  assert(ar->free_hint != UINT_MAX && ar->free_hint < ar->chunksz && ar->chunk[ar->free_hint][0] != UINTPTR_MAX);
+
+  const int ndx = ctzptr(~(ar->chunk[ar->free_hint][0]));
+  assert(0 <= ndx && ndx < PTRBITS);
+  void* begin = ar->chunk[ar->free_hint] + 1;
+  void* obj = begin + ndx * ar->objsz;
+  const uintptr_t mask = UINTPTR_C(1) << ndx;
+  ar->chunk[ar->free_hint][0] |= mask;
+  if (ar->chunk[ar->free_hint][0] == UINTPTR_MAX)
+    ar->free_hint = UINT_MAX;
+  ar->allocated++;
+  return obj;
+}
+
+void tiny_free(void *obj, u8 size)
+{
+  struct tmarena *ar = NULL;
+  for (unsigned int i = 0; i < tmarssz && !ar; ++i)
+    if (tmars[i].objsz == size)
+      ar = tmars + i;
+  assert(ar);
+  // TODO: bsearch
+  for (uint32_t i = 0; i < ar->chunksz; i++)
+    {
+      const void *begin = ar->chunk[i] + 1;
+      const void *end = begin + PTRBITS * sizeof(ar->objsz);
+      if (begin <= obj && obj < end)
+	{
+	  const int ndx = (obj - begin) / sizeof(ar->objsz);
+	  const uintptr_t mask = UINTPTR_C(1) << ndx;
+	  ar->chunk[i][0] &= ~mask;
+	  if (ar->free_hint == UINT_MAX ||
+	      popcountptr(ar->chunk[i][0]) > popcountptr(ar->chunk[ar->free_hint][0])
+	  )
+	    ar->free_hint = i;
+	  return;
+	}
+    }
+  abort();
 }
 
 void *whine_malloc(size_t size)

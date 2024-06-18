@@ -23,10 +23,28 @@
 #include "xxhash.h"
 #include "siphash.h"
 #include "halfsiphash.h"
+#include <stdalign.h>
+
+#include <sys/time.h>
+#include <sys/resource.h>
 
 static volatile int mem_recover = 0;
 static jmp_buf mem_jmp;
 static int one_file(char *file, int hard_opt);
+
+struct statm {
+  size_t vmsize, vmrss, shared, text, data;
+};
+void getstatm(struct statm *st)
+{
+  memset(st, 0, sizeof(struct statm));
+  FILE *fd = fopen("/proc/self/statm", "r");
+  if (!fd)
+    return;
+  if (fscanf(fd, "%zu %zu %zu %zu 0 %zu 0", &st->vmsize, &st->vmrss, &st->shared, &st->text, &st->data) != 5)
+    memset(st, 0, sizeof(struct statm));
+  fclose(fd);
+}
 
 /* Solaris headers don't have facility names. */
 #ifdef HAVE_SOLARIS_NETWORK
@@ -6006,12 +6024,41 @@ void read_opts(int argc, char **argv, char *compile_opts)
 	  printf(_("under the terms of the GNU General Public License, version 2 or 3.\n"));
 	  if (DEVTOOLS)
 	    {
-#define	      printf_szserv(x) do { printf("sizeof(" #x ") == %zu, offsetof(domain) == %zu\n", sizeof(x), offsetof(x, domain)); } while (0)
+#define	      printf_szserv(x) do { printf("sizeof(" #x ") == %zu\toffsetof(domain) == %zu\talignof() == %zu\n", sizeof(x), SIZE_MAX /* offsetof(x, domain) */, alignof(x)); } while (0)
 	      printf_szserv(struct server);
 	      printf_szserv(struct serv_addr4);
 	      printf_szserv(struct serv_addr6);
 	      printf_szserv(struct serv_local);
 	    }
+	  bool endless = true;
+	  daemon->log_file = "-";
+	  log_start(NULL, -1);
+
+	  struct statm before, after;
+	  getstatm(&before);
+	  const int count = 200000;
+	  if (getenv("DNTMALLOC")) {
+	    for (int i = 0; i < count; ++i)
+	      whine_malloc(sizeof(struct serv_addr4));
+	  } else if (getenv("DNTTINY")) {
+	    for (int i = 0; i < count; ++i)
+	      tiny_malloc(sizeof(struct serv_addr4));
+	  } else if (getenv("DNTONE")) {
+	      whine_malloc(count * sizeof(struct serv_addr4));
+	  } else if (getenv("DNTNONE")) {
+	      ;
+	  } else
+	    endless = false;
+	  sleep(1);
+	  getstatm(&after);
+	  my_syslog(LOG_INFO, "delta VmSize: %zu kb (%g b/struct)\tVmRSS: %zu (%g)\tRssFile+RssShmem: %zu (%g)\ttext: %zu (%g), data+stack: %zu (%g)",
+	      4 * (after.vmsize - before.vmsize), 4096. * (after.vmsize - before.vmsize) / count - sizeof(struct serv_addr4),
+	      4 * (after.vmrss - before.vmrss),   4096. * (after.vmrss - before.vmrss) / count - sizeof(struct serv_addr4),
+	      4 * (after.shared - before.shared), 4096. * (after.shared - before.shared) / count - sizeof(struct serv_addr4),
+	      4 * (after.text - before.text),     4096. * (after.text - before.text) / count - sizeof(struct serv_addr4),
+	      4 * (after.data - before.data),     4096. * (after.data - before.data) / count - sizeof(struct serv_addr4));
+	  while (endless)
+	    sleep(1);
           exit(0);
         }
       else if (DEVTOOLS && (LOPT_IS_HASH(option) || option == LOPT_RAND32))
