@@ -1486,6 +1486,7 @@ void bench_sample(enum bench_metrics, struct benchts *start);
 void bench_count(enum bench_metrics, unsigned int count);
 void bench_loop(enum bench_metrics, struct benchts *start, unsigned int count);
 void bench_log(enum bench_metrics, const char *msg);
+void statm_log(const char *msg);
 #else
 struct benchts { int:0; };
 static inline void bench_start(struct benchts *) { }
@@ -1493,7 +1494,13 @@ static inline void bench_sample(enum bench_metrics, struct benchts *) { }
 static inline void bench_count(enum bench_metrics, unsigned int) { }
 static inline void bench_loop(enum bench_metrics, struct benchts *, unsigned int) { }
 static inline void bench_log(enum bench_metrics, const char *) { }
+static inline void statm_log(const char *) { }
 #endif
+static inline void bench_log_all(void) {
+  bench_log(BENCH_BUILD_SERVER_ARRAY, "build_server_array()");
+  bench_log(BENCH_LOOKUP_DOMAIN, "lookup_domain()");
+  statm_log(NULL);
+}
 int netmask_length(struct in_addr mask);
 int is_same_net(struct in_addr a, struct in_addr b, struct in_addr mask);
 int is_same_net_prefix(struct in_addr a, struct in_addr b, int prefix);

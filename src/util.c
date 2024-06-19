@@ -546,6 +546,26 @@ void bench_log(enum bench_metrics m, const char *msg)
   else
     my_syslog(LOG_INFO, _("benchmark %s\tCount: %u"), msg, cu);
 }
+
+void statm_log(const char *suffix)
+{
+  size_t vmsize, vmrss, shared, text, data;
+  FILE *fd = fopen("/proc/self/statm", "r");
+  if (!fd)
+    {
+      my_syslog(LOG_ERR, _("failed to open /proc/self/statm"));
+      return;
+    }
+  if (!suffix)
+    suffix = "";
+
+  if (fscanf(fd, "%zu %zu %zu %zu 0 %zu 0", &vmsize, &vmrss, &shared, &text, &data) == 5)
+    my_syslog(LOG_INFO, _("statm%s: VmSize: %zu kB, VmRSS: %zu kB, data+stack: %zu kB, RssFile+RssShmem: %zu kB, text: %zu kB"),
+	suffix, 4 * vmsize, 4 * vmrss, 4 * data, 4 * shared, 4 * text);
+  else
+    my_syslog(LOG_ERR, _("failed to parse /proc/self/statm"));
+  fclose(fd);
+}
 #endif
 
 int netmask_length(struct in_addr mask)
