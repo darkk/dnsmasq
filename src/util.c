@@ -560,6 +560,15 @@ void bench_loop(enum bench_metrics m, struct benchts *start, unsigned int count)
   bench[m].count += count;
 }
 
+void bench_step(struct benchts *start, const char *msg)
+{
+  struct benchts now;
+  bench_start(&now);
+  double mono = (now.mono.tv_nsec - start->mono.tv_nsec) * 1e-9 + (now.mono.tv_sec - start->mono.tv_sec);
+  my_syslog(LOG_INFO, _("step %s:\t%g us\t%g ms"), msg, mono * 1e6, mono * 1e3);
+  memcpy(start, &now, sizeof(now));
+}
+
 void bench_log(enum bench_metrics m, const char *msg)
 {
   const unsigned int cu = bench[m].count;

@@ -205,6 +205,8 @@ void bench_mangle(build_server_array) (void)
   uintptr_t ptr0 = ~(uintptr_t)0;
   uintptr_t ptr1 = ~(uintptr_t)0;
 
+  struct benchts bts;
+  bench_start(&bts);
   // serv->next might be shuffled around, so `serial` does not always represent
   // the position in the config file, however it still reflect ordering
   // of servers within the same domain/prefix correctly and that's what matters.
@@ -231,6 +233,7 @@ void bench_mangle(build_server_array) (void)
       if (serv->flags & SERV_WILDCARD)
 	daemon->server_has_wildcard = 1;
     }
+  bench_step(&bts, "bsa-enumerate");
 
   assert(count); // TODO: implement a short-cut for a dnsmasq-without-upstreams, e.g. DHCP/TFTP
 
@@ -254,6 +257,8 @@ void bench_mangle(build_server_array) (void)
   w->ptrxor = ptr1;
   w->keymask = keymask;
   w->ptrwrotr = rotr;
+
+  bench_step(&bts, "bsa-alloc");
 
   assert(wormb_data_end(w) - wormb_data_begin(w) == (ptrdiff_t)count);
   uintptr_t *p = wormb_data_begin(w);
@@ -279,7 +284,9 @@ void bench_mangle(build_server_array) (void)
   assert(!serv);
   assert(p == wormb_data_end(w));
   assert(wormb_data_end(w) - wormb_data_begin(w) == (ptrdiff_t)count);
+  bench_step(&bts, "bsa-hash4qsort");
   qsort_arr(wormb_data_begin(w), count, sizeof(void*), wormb_order, w);
+  bench_step(&bts, "bsa-qsort");
 
 #if 0
   daemon->serverarray = whine_malloc(count * sizeof(void*));
@@ -310,6 +317,7 @@ void bench_mangle(build_server_array) (void)
       **dest = serv;
       *dest = &serv->next;
     }
+  bench_step(&bts, "bsa-fix-next");
   assert(i == count);
   daemon->servers_tail = daemon->servers ? container_of(tserv, struct server, next) : NULL;
   *tserv = NULL;

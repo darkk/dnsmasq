@@ -1658,6 +1658,7 @@ void bench_sample(enum bench_metrics, struct benchts *start);
 void bench_count(enum bench_metrics, unsigned int count);
 void bench_loop(enum bench_metrics, struct benchts *start, unsigned int count);
 void bench_log(enum bench_metrics, const char *msg);
+void bench_step(struct benchts *start, const char *msg);
 void statm_log(const char *msg);
 #define bench_mangle(fn) fn ## _bench_wrap
 #define bench_wrap4(counter, fn, args, argdecl) \
@@ -1686,6 +1687,7 @@ static inline void bench_sample(enum bench_metrics, struct benchts *) { }
 static inline void bench_count(enum bench_metrics, unsigned int) { }
 static inline void bench_loop(enum bench_metrics, struct benchts *, unsigned int) { }
 static inline void bench_log(enum bench_metrics, const char *) { }
+static inline void bench_step(struct benchts *, const char *) { }
 static inline void statm_log(const char *) { }
 #define bench_mangle(fn) fn
 #define bench_wrap4(counter, fn, args, argdecl)
