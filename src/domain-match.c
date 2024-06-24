@@ -163,37 +163,22 @@ u8 bestrotright(const uintptr_t cnst, const int partbits)
   return retval;
 }
 
-static int count_hash = 0;
-
 static int wormb_order qcomp(const void *av, const void *bv, void *ctxv)
 {
-  const uintptr_t *au = av;
-  const uintptr_t *bu = bv;
-  const struct worm_bsearch *w = ctxv;
-  const struct server *as = worm_unmask(*au, w); // (const struct server *)(rotleftptr(*au & ~(w->keymask), w->ptrwrotr) ^ w->ptrxor);
-  const struct server *bs = worm_unmask(*bu, w); // (const struct server *)(rotleftptr(*bu & ~(w->keymask), w->ptrwrotr) ^ w->ptrxor);
+  const uintptr_t *ap = av;
+  const uintptr_t *bp = bv;
+  const uintptr_t sortmask = (uintptr_t)ctxv;
+  const uintptr_t ah = (ap[0] & sortmask);
+  const uintptr_t bh = (bp[0] & sortmask);
+#if 0 // That's tight loop, so bench_count() is omitted on fast-path.
+  bench_count(BENCH_SERVCMP_INLINE, 1);
+#endif
+  if (ah != bh)
+    return (ah < bh) ? -1 : 1;
+  const struct server *as = (struct server *)ap[1];
+  const struct server *bs = (struct server *)bp[1];
   bench_count(BENCH_SERVCMP_DEREF, 1);
-  uintptr_t ah = as->hash4qsort;
-  uintptr_t bh = bs->hash4qsort;
-  count_hash += 2;
-
-  assert((ah & w->keymask) == (*au & w->keymask) && (bh & w->keymask) == (*bu & w->keymask));
-
-  const int lobits = MIN(ctzptr(w->keymask), 16); // low bits usable for domhash16
-  const uintptr_t lomask = ~(UINTPTR_MAX << lobits);
-  assert((ah & lomask) == as->domhash16 && (bh & lomask) == bs->domhash16);
-  const uintptr_t sortmask = ~(UINTPTR_MAX >> w->partbits) | w->keymask | lomask;
-
-  ah &= sortmask;
-  bh &= sortmask;
-
   // TODO: SERV_WILDCARD, SERV_FOR_NODOTS, SERV_LITERAL_ADDRESS etc
-
-  if (ah < bh)
-    return -1;
-  else if (ah > bh)
-    return 1;
-
   return hostname_order(server_domain(as), server_domain(bs));
 }
 
@@ -251,77 +236,67 @@ void bench_mangle(build_server_array) (void)
   const uintptr_t keymask = rotrightptr(ptr0 | ptr1, rotr) & (UINTPTR_MAX >> partbits);
   const int lobits = MIN(ctzptr(keymask), 16); // low bits usable for domhash16
   const uintptr_t lomask = ~(UINTPTR_MAX << lobits);
+  const uintptr_t sortmask = ~(UINTPTR_MAX >> partbits) | keymask | lomask;
 
-  struct worm_bsearch* w = wormb_alloc(partbits, count);
+  // Allocating twice as much and sorting (hash, ptr) tuples is several times faster than sorting
+  // (ptr->hash) values. That's, probably, due to access pattern being more cache-friendly.
+  // It's x4 speedup on MediaTek MT7620N ver:2 eco:6 with cache linesize being 32 bytes.
+  struct worm_bsearch* w = wormb_alloc(partbits, count * 2);
   daemon->serverhash = w;
   w->ptrxor = ptr1;
   w->keymask = keymask;
   w->ptrwrotr = rotr;
-
   bench_step(&bts, "bsa-alloc");
 
-  assert(wormb_data_end(w) - wormb_data_begin(w) == (ptrdiff_t)count);
+  assert(wormb_data_end(w) - wormb_data_begin(w) == 2 * (ptrdiff_t)count);
   uintptr_t *p = wormb_data_begin(w);
-  struct server *next = NULL;
-  for (serv = daemon->servers; serv && p != wormb_data_end(w); p++, serv = next)
+  for (serv = daemon->servers; serv && p != wormb_data_end(w); p += 2, serv = serv->next)
     {
-      next = serv->next; // union with hash4qsort
       const uintptr_t hash = bp_hash(server_domain(serv));
       serv->domhash16 = hash & lomask;
-      serv->hash4qsort = hash;
-      *p = worm_mask(serv, hash, w);
+      p[0] = hash;
+      p[1] = (uintptr_t)serv;
     }
   assert(!serv);
   assert(!daemon->local_domains || p != wormb_data_end(w));
-  for (serv = daemon->local_domains; serv && p != wormb_data_end(w); p++, serv = next)
+  for (serv = daemon->local_domains; serv && p != wormb_data_end(w); p += 2, serv = serv->next)
     {
-      next = serv->next; // union with hash4qsort
       const uintptr_t hash = bp_hash(server_domain(serv));
       serv->domhash16 = hash & lomask;
-      serv->hash4qsort = hash;
-      *p = worm_mask(serv, hash, w);
+      p[0] = hash;
+      p[1] = (uintptr_t)serv;
     }
   assert(!serv);
   assert(p == wormb_data_end(w));
-  assert(wormb_data_end(w) - wormb_data_begin(w) == (ptrdiff_t)count);
+  assert(wormb_data_end(w) - wormb_data_begin(w) == 2 * (ptrdiff_t)count);
   bench_step(&bts, "bsa-hash4qsort");
-  qsort_arr(wormb_data_begin(w), count, sizeof(void*), wormb_order, w);
+
+  qsort_arr(wormb_data_begin(w), count, 2 * sizeof(uintptr_t), wormb_order, (void*)sortmask);
   bench_step(&bts, "bsa-qsort");
 
-#if 0
-  daemon->serverarray = whine_malloc(count * sizeof(void*));
-  daemon->serverarraysz = count;
-#endif
-
-  // FIXME: server_loops is not handled correctly here
-  daemon->servers = daemon->local_domains = NULL;
-  struct server **tserv = &daemon->servers;
-  struct server **tlocal = &daemon->local_domains;
-  size_t i;
   w->zero = SIZE_MAX;
-  for (p = wormb_data_begin(w), i = 0; p != wormb_data_end(w); p++, i++)
+  for (uintptr_t *dst = wormb_data_begin(w), *src = dst, i = 0; src != wormb_data_end(w); src += 2, dst++, i++)
     {
-      serv = worm_unmask(*p, w);
-     //  daemon->serverarray[i] = serv;
+      serv = (struct server *)src[1];
+      const uintptr_t hash = src[0];
       if (server_sizeof(serv->flags) == sizeof(struct server))
 	serv->arrayposn = i;
       if (w->zero == SIZE_MAX && server_domain_empty(serv))
 	w->zero = i;
       if (partbits)
 	{
-	  size_t partition = serv->hash4qsort >> (PTRBITS - partbits);
+	  size_t partition = hash >> (PTRBITS - partbits);
 	  if (partition != ~(SIZE_MAX << partbits))
-	    w->tabluint[partition] = (uintptr_t)(p+1);
+	    w->tabluint[partition] = i+1;
+	  // TODO: should it be optimised?
 	}
-      struct server ***dest = serv->flags & SERV_IS_LOCAL ? &tlocal : &tserv;
-      **dest = serv;
-      *dest = &serv->next;
+      *dst = worm_mask(serv, hash, w);
     }
-  bench_step(&bts, "bsa-fix-next");
-  assert(i == count);
-  daemon->servers_tail = daemon->servers ? container_of(tserv, struct server, next) : NULL;
-  *tserv = NULL;
-  *tlocal = NULL;
+  w = wormb_realloc(w, count);
+  for (size_t partition = 0; partition < wormb_npart(w) - 1; ++partition)
+    w->tabluint[partition] = (uintptr_t)(&wormb_data_begin(w)[w->tabluint[partition]]);
+  assert(wormb_data_end(w) - wormb_data_begin(w) == (ptrdiff_t)count);
+  bench_step(&bts, "bsa-partbits");
 
 #if 0
 

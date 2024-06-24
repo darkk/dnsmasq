@@ -71,6 +71,7 @@ typedef unsigned int u32;
 typedef unsigned long long u64;
 
 #define container_of(ptr, type, member) ((type *)((void *)(ptr) - offsetof(type, member)))
+#define sizeof_of(type, member) (sizeof(((type *)0)->member))
 #define countof(x)      (long)(sizeof(x) / sizeof(x[0]))
 #define MIN(a,b)        ((a) < (b) ? (a) : (b))
 #define MAX(a,b)        ((a) > (b) ? (a) : (b))
@@ -680,10 +681,7 @@ struct worm_bsearch {
 };
 
 struct server {
-  union {
-    struct server *next;
-    uintptr_t hash4qsort;
-  };
+  struct server *next;
   u16 flags, domhash16;
   // FIXME: arrayposn is to be changed
   int serial, arrayposn;
@@ -706,30 +704,21 @@ struct server {
 
 /* First three fields must match struct server in next three definitions.. */
 struct serv_addr4 {
-  union {
-    struct server *next;
-    uintptr_t hash4qsort;
-  };
+  struct server *next;
   u16 flags, domhash16;
   struct in_addr addr;
   char domain[];
 };
 
 struct serv_addr6 {
-  union {
-    struct server *next;
-    uintptr_t hash4qsort;
-  };
+  struct server *next;
   u16 flags, domhash16;
   struct in6_addr addr;
   char domain[];
 };
 
 struct serv_local {
-  union {
-    struct server *next;
-    uintptr_t hash4qsort;
-  };
+  struct server *next;
   u16 flags, domhash16;
   char domain[];
 };
@@ -1605,6 +1594,7 @@ static inline uintptr_t randptr(void) { return rand64(); }
 uintptr_t bp_hash(const char *name);
 uintptr_t bp_memhash(const void *name, size_t n);
 struct worm_bsearch* wormb_alloc(int partbits, size_t nmemb);
+struct worm_bsearch* wormb_realloc(struct worm_bsearch *w, size_t nmemb);
 static inline size_t wormb_npart(struct worm_bsearch *w) { return (size_t)1u << w->partbits; }
 static inline uintptr_t* wormb_data_begin(struct worm_bsearch *w) { return w->tabluint + wormb_npart(w); }
 static inline uintptr_t* wormb_data_end(struct worm_bsearch *w) { return (uintptr_t*)w->tabluint[wormb_npart(w) - 1]; }

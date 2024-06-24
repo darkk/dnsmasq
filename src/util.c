@@ -128,7 +128,7 @@ struct worm_bsearch* wormb_alloc(int partbits, size_t nmemb)
   assert(0 <= partbits && partbits < PTRBITS);
   const size_t sz = max_size(
       sizeof(struct worm_bsearch),
-      offsetof(struct worm_bsearch, tabluint) + sizeof(void*) * (nmemb + (1u << partbits)));
+      offsetof(struct worm_bsearch, tabluint) + sizeof_of(struct worm_bsearch, tabluint[0]) * (nmemb + (1u << partbits)));
   struct worm_bsearch * const ret = whine_malloc(sz);
   if (ret)
     {
@@ -136,6 +136,18 @@ struct worm_bsearch* wormb_alloc(int partbits, size_t nmemb)
       ret->tabluint[wormb_npart(ret) - 1] = (uintptr_t)(ret->tabluint + wormb_npart(ret) + nmemb);
     }
   return ret;
+}
+
+struct worm_bsearch* wormb_realloc(struct worm_bsearch *w, size_t nmemb)
+{
+  int partbits = w->partbits;
+  const size_t sz = max_size(
+      sizeof(struct worm_bsearch),
+      offsetof(struct worm_bsearch, tabluint) + sizeof_of(struct worm_bsearch, tabluint[0]) * (nmemb + (1u << partbits)));
+  w = whine_realloc(w, sz);
+  if (w)
+    w->tabluint[wormb_npart(w) - 1] = (uintptr_t)(w->tabluint + wormb_npart(w) + nmemb);
+  return w;
 }
 
 int rr_on_list(struct rrlist *list, unsigned short rr)
