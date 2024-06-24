@@ -186,13 +186,22 @@ u8 bestrotright(const uintptr_t cnst, const int partbits)
   return retval;
 }
 
+#if 0
 static int wormb_order qcomp(const void *av, const void *bv, void *ctxv)
+#else
+static int wormb_order (const void *av, const void *bv)
+#endif
 {
   const uintptr_t *ap = av;
   const uintptr_t *bp = bv;
+#if 0
   const uintptr_t sortmask = (uintptr_t)ctxv;
   const uintptr_t ah = (ap[0] & sortmask);
   const uintptr_t bh = (bp[0] & sortmask);
+#else
+  const uintptr_t ah = ap[0];
+  const uintptr_t bh = bp[0];
+#endif
 #if 0 // That's tight loop, so bench_count() is omitted on fast-path.
   bench_count(BENCH_SERVCMP_INLINE, 1);
 #endif
@@ -294,7 +303,11 @@ void bench_mangle(build_server_array) (void)
   assert(wormb_data_end(w) - wormb_data_begin(w) == 2 * (ptrdiff_t)count);
   bench_step(&bts, "bsa-hash4qsort");
 
+#if 0
   qsort_arr(wormb_data_begin(w), count, 2 * sizeof(uintptr_t), wormb_order, (void*)sortmask);
+#else
+  qsort(wormb_data_begin(w), count, 2 * sizeof(uintptr_t), wormb_order);
+#endif
   bench_step(&bts, "bsa-qsort");
 
   w->zero = SIZE_MAX;
