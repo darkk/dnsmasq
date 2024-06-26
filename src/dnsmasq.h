@@ -793,7 +793,7 @@ struct frec {
   time_t time;
   u32 forward_timestamp;
   int forward_delay;
-  unsigned char *hash[HASH_SIZE];
+  u8 hash[HASH_SIZE];
   struct blockdata *stash; /* Saved reply, whilst we validate */
   size_t stash_len;
 #ifdef HAVE_DNSSEC 
