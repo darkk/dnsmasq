@@ -23,6 +23,7 @@ int extract_name(struct dns_header *header, size_t plen, unsigned char **pp,
   unsigned int j, l, namelen = 0, hops = 0;
   int retvalue = 1;
   
+  bench_count(BENCH_EXTRACT_NAME, 1);
   if (isExtract)
     *cp = 0;
 
@@ -1184,6 +1185,7 @@ unsigned int extract_request(struct dns_header *header, size_t qlen, char *name,
   unsigned char *p = (unsigned char *)(header+1);
   int qtype, qclass;
 
+  bench_count(BENCH_EXTRACT_REQUEST, 1);
   if (typep)
     *typep = 0;
 
