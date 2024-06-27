@@ -25,7 +25,7 @@ static struct frec *lookup_frec_dnssec(char *target, int class, int flags, struc
 
 static unsigned short get_id(void);
 static void free_frec(struct frec *f);
-static void query_full(time_t now, char *domain);
+static void query_full(time_t now, const char *domain);
 
 static void return_reply(time_t now, struct frec *forward, struct dns_header *header, ssize_t n, int status);
 
@@ -2917,7 +2917,7 @@ static struct frec *get_new_frec(time_t now, struct server *master, int force)
 
   if (!force && count >= daemon->ftabsize)
     {
-      query_full(now, server_domain(master));
+      query_full(now, dneetoa(server_dneedle(master)));
       return NULL;
     }
   
@@ -2944,7 +2944,7 @@ static struct frec *get_new_frec(time_t now, struct server *master, int force)
   return target;
 }
 
-static void query_full(time_t now, char *domain)
+static void query_full(time_t now, const char *domain)
 {
   static time_t last_log = 0;
   

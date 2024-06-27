@@ -171,6 +171,23 @@ extern int capget(cap_user_header_t header, cap_user_data_t data);
 /* daemon is function in the C library.... */
 #define daemon dnsmasq_daemon
 
+// That's "canonical" domain representation for in-memory lookups using
+// following conversion rules:
+//   - A-Z is converted to a-z
+//   - <\000> and <\.> are converted to <Z> and <D> within labels
+//   - <.> is used as label separator
+//   - example.com. is reversed to moc.elpmaxe, root <\.> is not stored
+//   - the domain name is NUL-terminated
+// So 19 on-wire bytes "<5>a<0>b.c<7>example<3>com<0>" become
+// 18 bytes in dneedle: "moc.example.cDbZa<0>".
+// Length is not stored to make memory reads aligned while computing hash(suffix).
+// It's unclear if <len> as a lable separator is benificial for SERV_WILDCARD.
+// sizeof() comes from 255 DNS octets - root <0> - leading <len> + NUL.
+#define DNEEDLE_SIZEOF_MAX 254
+#define DNEEDLE_LEN_MAX    (DNEEDLE_SIZEOF_MAX - 1)
+struct dneedle;
+struct dneedle_aligned;
+
 #define BPD_PTROPS_SOURCE 1
 #include "bpdhash.h"
 
@@ -748,12 +765,21 @@ static inline size_t server_offsetof_domain(u16 flags)
     : offsetof(struct serv_local, domain);
 }
 
+void server_domain(const struct server *s);
+#if 0
 static inline /* const */ char* server_domain(const struct server *s) {
    return ((/* const */ char*)s) + server_offsetof_domain(s->flags);
 }
+#endif
 
-static inline int server_domain_empty(struct server *s) {
-  return server_domain(s)[0] == '\0';
+static inline const struct dneedle* server_dneedle(const struct server *s) {
+  return (struct dneedle *)(((u8*)s) + server_offsetof_domain(s->flags));
+}
+
+#define server_dneehash(s) (dn_hazh(server_dneedle(s)))
+
+static inline int server_domain_empty(const struct server *s) {
+  return *((u8*)server_dneedle(s)) == '\0';
 }
 
 struct rebind_domain {
@@ -1369,6 +1395,7 @@ extern struct daemon {
   char *packet; /* packet buffer */
   int packet_buff_sz; /* size of above */
   char *namebuff; /* MAXDNAME size buffer */
+  struct dneedle_aligned *dneebuff;
   char *workspacename;
 #ifdef HAVE_DNSSEC
   char *keyname; /* MAXDNAME size buffer */
@@ -1579,6 +1606,15 @@ int verify(struct blockdata *key_data, unsigned int key_len, unsigned char *sig,
 char *ds_digest_name(int digest);
 char *algo_digest_name(int algo);
 char *nsec3_digest_name(int digest);
+
+/* dnhash.c */
+void dn_init();
+int do_dneedle(void *dst, const char *presentation, size_t n);
+const char* dneetoa(const struct dneedle*);
+static inline int dneecmp(const struct dneedle *a, const struct dneedle *b) { return strcmp((const char*)a, (const char *)b); }
+uintptr_t dn_hazh(const struct dneedle*);
+uintptr_t dn_hash(const struct dneedle*, size_t len);
+uintptr_t dna_hash(const struct dneedle_aligned *, size_t len);
 
 /* util.c */
 static inline size_t max_size(size_t a, size_t b) { return (a > b) ? a : b; }

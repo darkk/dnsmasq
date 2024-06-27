@@ -213,8 +213,9 @@ struct myoption {
 #define LOPT_SIP64_HASH    398
 #define LOPT_BPMEM_HASH    399
 #define LOPT_BPTST_HASH    400
+#define LOPT_DN_HASH       401
 
-#define LOPT_IS_HASH(x) (LOPT_CACHE_HASH <= (x) && (x) <= LOPT_BPTST_HASH)
+#define LOPT_IS_HASH(x) (LOPT_CACHE_HASH <= (x) && (x) <= LOPT_DN_HASH)
 
 #ifdef HAVE_GETOPT_LONG
 static const struct option opts[] =  
@@ -416,6 +417,7 @@ static const struct myoption opts[] =
     { "dbg-bp-hash", 0, 0, LOPT_BP_HASH },
     { "dbg-bpmem-hash", 0, 0, LOPT_BPMEM_HASH },
     { "dbg-bptst-hash", 0, 0, LOPT_BPTST_HASH },
+    { "dbg-dn-hash", 0, 0, LOPT_DN_HASH },
     { "dbg-xxh32-hash", 0, 0, LOPT_XXH32_HASH },
     { "dbg-xxh64-hash", 0, 0, LOPT_XXH64_HASH },
     { "dbg-xxh3-hash", 0, 0, LOPT_XXH3_HASH },
@@ -636,6 +638,7 @@ static struct {
   { LOPT_BP_HASH, 0, NULL, gettext_noop("Hash STDIN strings with buz_pearson_hash()."), NULL },
   { LOPT_BPMEM_HASH, 0, NULL, gettext_noop("Hash STDIN strings with buz_pearson_hash_2()."), NULL },
   { LOPT_BPTST_HASH, 0, NULL, gettext_noop("Ensure that buz_pearson_hash_2() works."), NULL },
+  { LOPT_DN_HASH, 0, NULL, gettext_noop("Hash STDIN strings with XXH-derived dn_hash()."), NULL },
   { LOPT_XXH32_HASH, 0, NULL, gettext_noop("Hash STDIN strings with XXH32()."), NULL },
   { LOPT_XXH64_HASH, 0, NULL, gettext_noop("Hash STDIN strings with XXH64()."), NULL },
   { LOPT_XXH3_HASH, 0, NULL, gettext_noop("Hash STDIN strings with XXH3()."), NULL },
@@ -5922,6 +5925,7 @@ void read_opts(int argc, char **argv, char *compile_opts)
   daemon = opt_malloc(sizeof(struct daemon));
   memset(daemon, 0, sizeof(struct daemon));
   daemon->namebuff = buff;
+  daemon->dneebuff = opt_malloc(DNEEDLE_SIZEOF_MAX);
   daemon->workspacename = safe_malloc((MAXDNAME * 2) + 1);
   daemon->addrbuff = safe_malloc(ADDRSTRLEN);
   
@@ -6043,7 +6047,14 @@ void read_opts(int argc, char **argv, char *compile_opts)
 	    }
 
 	  int count = 0;
-	  char domain[260]; // TODO: what's the correct size?
+	  union {
+	    char DOMAIN[DNEEDLE_SIZEOF_MAX + 16]; /* +16 for trailing whitespace */
+	    uintptr_t align;
+	  } UNION;
+#define MISALIGN 0
+#define domain (&(UNION.DOMAIN[MISALIGN]))
+	  uintptr_t alignment = ((uintptr_t)domain) & (sizeof(uintptr_t) - 1);
+	  assert(((void*)UNION.DOMAIN == (void*)&UNION.align) && alignment == MISALIGN);
 	  uint32_t seed32 = rand32();
 	  uint64_t seed64 = rand64();
 	  union {
@@ -6083,6 +6094,7 @@ void read_opts(int argc, char **argv, char *compile_opts)
 	      hashret = "uint64_t";
 	      break;
 	    case LOPT_BP_HASH:
+	    case LOPT_DN_HASH:
 	    case LOPT_BPMEM_HASH:
 	    case LOPT_BPTST_HASH:
 	    case LOPT_STRLENP_HASH:
@@ -6094,25 +6106,27 @@ void read_opts(int argc, char **argv, char *compile_opts)
 	  }
 	  struct benchts start;
 	  bench_start(&start);
-	  while (fgets(domain, sizeof(domain), stdin))
+	  while (fgets(domain, sizeof(UNION.DOMAIN), stdin))
 	  {
 	    char *last = domain + strlen(domain) - 1; // FIXME: overflow on ""
 	    for (; last >= domain && isspace(*last); last--)
 	      *last = '\0';
-	    last++;
+	    last++; // points to \0 now
+	    const size_t len = last - domain; // strlen()
 	    switch (option) {
 	    case LOPT_CACHE_HASH:   uint = cache_hash_uint(domain); break;
 	    case LOPT_BP_HASH:      ptr = bp_hash(domain); break;
-	    case LOPT_BPMEM_HASH:   ptr = bp_memhash(domain, last - domain); break;
-	    case LOPT_BPTST_HASH:   assert(bp_memhash(domain, last - domain) == bp_hash(domain)); break;
-	    case LOPT_XXH32_HASH:   uint32 = XXH32(domain, strlen(domain), seed32); break;
-	    case LOPT_XXH64_HASH:   uint64 = XXH64(domain, strlen(domain), seed64); break;
-	    case LOPT_XXH3_HASH:    uint64 = XXH3_64bits_withSeed(domain, strlen(domain), seed64); break;
-	    case LOPT_HSIP32_HASH:  halfsiphash(domain, strlen(domain), &seed64, (u8*)&uint32, 4); break;
-	    case LOPT_HSIP64_HASH:  halfsiphash(domain, strlen(domain), &seed64, (u8*)&uint64, 8); break;
-	    case LOPT_SIP64_HASH:   siphash(domain, strlen(domain), seed128.c, (u8*)&uint64, 8); break;
-	    case LOPT_STRLENI_HASH: uint = strlen(domain); break;
-	    case LOPT_STRLENP_HASH: ptr = strlen(domain); break;
+	    case LOPT_BPMEM_HASH:   ptr = bp_memhash(domain, len); break;
+	    case LOPT_BPTST_HASH:   assert(bp_memhash(domain, len) == bp_hash(domain)); break;
+	    case LOPT_DN_HASH:      ptr = dn_hash((struct dneedle*)domain, len); break;
+	    case LOPT_XXH32_HASH:   uint32 = XXH32(domain, len, seed32); break;
+	    case LOPT_XXH64_HASH:   uint64 = XXH64(domain, len, seed64); break;
+	    case LOPT_XXH3_HASH:    uint64 = XXH3_64bits_withSeed(domain, len, seed64); break;
+	    case LOPT_HSIP32_HASH:  halfsiphash(domain, len, &seed64, (u8*)&uint32, 4); break;
+	    case LOPT_HSIP64_HASH:  halfsiphash(domain, len, &seed64, (u8*)&uint64, 8); break;
+	    case LOPT_SIP64_HASH:   siphash(domain, len, seed128.c, (u8*)&uint64, 8); break;
+	    case LOPT_STRLENI_HASH: uint = len; break;
+	    case LOPT_STRLENP_HASH: ptr = len; break;
 	    case LOPT_NOPI_HASH:    uint = count; break;
 	    case LOPT_NOPP_HASH:    ptr = count; break;
 	    default: abort();
@@ -6128,6 +6142,7 @@ void read_opts(int argc, char **argv, char *compile_opts)
 	    case LOPT_BP_HASH:      hashname = "bp_hash()"; break;
 	    case LOPT_BPMEM_HASH:   hashname = "bp_memhash()"; break;
 	    case LOPT_BPTST_HASH:   hashname = "bp_{,mem}hash()"; break;
+	    case LOPT_DN_HASH:      hashname = "dn_hash()"; break;
 	    case LOPT_XXH32_HASH:   hashname = "XXH32()"; break;
 	    case LOPT_XXH64_HASH:   hashname = "XXH64()"; break;
 	    case LOPT_XXH3_HASH:    hashname = "XXH3_64b()"; break;
@@ -6143,6 +6158,7 @@ void read_opts(int argc, char **argv, char *compile_opts)
 	  sprintf(domain, "%s %s", hashret, hashname);
 	  bench_log(BENCH_OPT_DBG_HASH, domain);
 	  exit(0);
+#undef domain
 	}
       else if (option == 'C')
 	{

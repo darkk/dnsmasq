@@ -1602,7 +1602,7 @@ void check_servers(int no_loop_check)
 	  if (!server_domain_empty(serv))
 	    {
 	      struct ds_config *ds;
-	      char *domain = server_domain(serv);
+	      char *domain = dneetoa(server_dneedle(serv)); // FIXME: it was `server_domain(serv)`
 	      
 	      /* .example.com is valid */
 	      while (*domain == '.')
@@ -1661,7 +1661,7 @@ void check_servers(int no_loop_check)
       
       if (!server_domain_empty(serv) || (serv->flags & SERV_FOR_NODOTS))
 	{
-	  char *s1, *s2, *s3 = "", *s4 = "";
+	  const char *s1, *s2, *s3 = "", *s4 = "";
 
 #ifdef HAVE_DNSSEC
 	  if (option_bool(OPT_DNSSEC_VALID) && !(serv->flags & SERV_DO_DNSSEC))
@@ -1672,7 +1672,7 @@ void check_servers(int no_loop_check)
 	  else if (server_domain_empty(serv))
 	    s1 = _("default"), s2 = "";
 	  else
-	    s1 = _("domain"), s2 = server_domain(serv), s4 = (serv->flags & SERV_WILDCARD) ? "*" : "";
+	    s1 = _("domain"), s2 = dneetoa(server_dneedle(serv)), s4 = (serv->flags & SERV_WILDCARD) ? "*" : "";
 	  
 	  my_syslog(LOG_INFO, _("using nameserver %s#%d for %s %s%s %s"), daemon->namebuff, port, s1, s4, s2, s3);
 	}
@@ -1698,10 +1698,10 @@ void check_servers(int no_loop_check)
 	 {
 	   count--;
 	   if (++locals <= LOCALS_LOGGED)
-	     my_syslog(LOG_INFO, _("using only locally-known addresses for %s"), server_domain(serv));
+	     my_syslog(LOG_INFO, _("using only locally-known addresses for %s"), dneetoa(server_dneedle(serv)));
 	 }
        else if (serv->flags & SERV_USE_RESOLV)
-	 my_syslog(LOG_INFO, _("using standard nameservers for %s"), server_domain(serv));
+	 my_syslog(LOG_INFO, _("using standard nameservers for %s"), dneetoa(server_dneedle(serv)));
     }
   
   if (locals > LOCALS_LOGGED)

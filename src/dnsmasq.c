@@ -104,6 +104,7 @@ int main (int argc, char **argv)
   umask(022); /* known umask, create leases and pid files as 0644 */
 
   rand_init(); /* Must precede read_opts() */
+  dn_init();
   
   read_opts(argc, argv, compile_opts);
  

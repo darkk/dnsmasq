@@ -45,8 +45,20 @@ static inline void* worm_unmask(uintptr_t val, const struct worm_bsearch *w)
 struct serv_bfind_ctx {
   struct worm_bsearch w;
   uintptr_t hash;
-  const char *qdomain;
+  struct dneedle *needle;
+  unsigned len;
 };
+
+static int cmp_dneedle_server(const struct dneedle *needle, unsigned int len, const struct server *s)
+{
+  const char *sd = (const char*)server_dneedle(s);
+  int rc = strncmp(sd, (const char *)needle, len);
+  if (rc == 0)
+    rc = strncmp(sd + len, "", 1); // TODO: test me
+  return rc;
+}
+
+static const int log_cmp = 0;
 
 static int server_bfind_cmp(const void *ctxv, const void *val)
 {
@@ -54,12 +66,11 @@ static int server_bfind_cmp(const void *ctxv, const void *val)
   const uintptr_t *p = val;
   const uintptr_t ctx_masked = ctx->hash & ctx->w.keymask;
   const uintptr_t hash_masked = *p & ctx->w.keymask;
-  const int log_cmp = 0;
 
   bench_count(BENCH_SERVCMP_INLINE, 1);
   if (log_cmp) {
-    const struct server *useless = worm_unmask(*p, &ctx->w);
-    my_syslog(LOG_INFO, "cmp: %s. (%p) <^_^> (%p) %s.", ctx->qdomain, bp_hash(ctx->qdomain), bp_hash(server_domain(useless)), server_domain(useless));
+    const struct server *s = worm_unmask(*p, &ctx->w);
+    my_syslog(LOG_INFO, "cmp: --^^-- (%p | %p) <^_^> (%p | %p) %s.", ctx->hash, ctx_masked, server_dneehash(s), hash_masked, dneetoa(server_dneedle(s)));
   }
   if (ctx_masked < hash_masked)
     return -1;
@@ -71,21 +82,26 @@ static int server_bfind_cmp(const void *ctxv, const void *val)
   const int lobits = MIN(ctzptr(ctx->w.keymask), 16);
   const uintptr_t lomask = ~(UINTPTR_MAX << lobits);
   if (log_cmp)
-    my_syslog(LOG_INFO, "cmp: %s. (%p) <o-o> (%p) %s.", ctx->qdomain, bp_hash(ctx->qdomain), bp_hash(server_domain(s)), server_domain(s));
+    my_syslog(LOG_INFO, "cmp: --^^-- (%p) <o-o> (%p) %s.", ctx->hash, server_dneehash(s), dneetoa(server_dneedle(s)));
   if ((ctx->hash & lomask) < s->domhash16)
     return -1;
   if ((ctx->hash & lomask) > s->domhash16)
     return 1;
 
   if (log_cmp)
-    my_syslog(LOG_INFO, "cmp: %s. (%p) <0-@> (%p) %s.", ctx->qdomain, bp_hash(ctx->qdomain), bp_hash(server_domain(s)), server_domain(s));
-  return hostname_order(ctx->qdomain, server_domain(s));
+    my_syslog(LOG_INFO, "cmp: --^^-- (%p) <0-@> (%p) %s.", ctx->hash, server_dneehash(s), dneetoa(server_dneedle(s)));
+  return cmp_dneedle_server(ctx->needle, ctx->len, s);
 }
 
-static size_t server_bfind(struct worm_bsearch *w, uintptr_t hash, const char *qdomain)
+static size_t server_bfind(struct worm_bsearch *w, const struct dneedle_aligned *needle, unsigned qlen)
 {
-  if (*qdomain == '\0')
-    return w->zero;
+  if (qlen == 0 || *(const char*)needle == '\0')
+    {
+      if (log_cmp)
+	my_syslog(LOG_INFO, "cmp: %s[-%d:] zero! %zu", dneetoa((const struct dneedle*)needle), qlen, w->zero);
+      return w->zero;
+    }
+  const uintptr_t hash = dna_hash(needle, qlen);
   const size_t partition = w->partbits ? (hash >> (PTRBITS - w->partbits)) : 0;
   uintptr_t *table = wormb_data_begin(w);
   uintptr_t *begin = wormb_part_begin(w, partition);
@@ -94,12 +110,19 @@ static size_t server_bfind(struct worm_bsearch *w, uintptr_t hash, const char *q
   struct serv_bfind_ctx ctx;
   memcpy(&ctx.w, w, sizeof(*w));
   ctx.hash = hash;
-  ctx.qdomain = qdomain;
+  ctx.needle = (struct dneedle *)needle;
+  ctx.len = qlen;
+  if (log_cmp)
+    my_syslog(LOG_INFO, "cmp: %s[-%d:] (%p) bsearch...", dneetoa(ctx.needle), ctx.len, ctx.hash);
   uintptr_t *p = bsearch(&ctx, begin, nelem, sizeof(void*), server_bfind_cmp);
   if (!p)
     return SIZE_MAX;
-  assert(hostname_order(server_domain(worm_unmask(*p, w)), qdomain) == 0);
   return p - table;
+}
+
+static bool serverp_same_domain(const struct server *a, const struct server *b)
+{
+  return strcmp((const char*)server_dneedle(a), (const char*)server_dneedle(b)) == 0;
 }
 
 static bool server_same_domain(struct worm_bsearch *w, size_t a, size_t b)
@@ -118,7 +141,7 @@ static bool server_same_domain(struct worm_bsearch *w, size_t a, size_t b)
   if (pa->domhash16 != pb->domhash16)
     return false;
 
-  return hostname_order(server_domain(pa), server_domain(pb)) == 0;
+  return serverp_same_domain(pa, pb);
 }
 
 struct server* server_get(struct worm_bsearch *w, size_t n)
@@ -179,7 +202,7 @@ static int wormb_order qcomp(const void *av, const void *bv, void *ctxv)
   const struct server *bs = (struct server *)bp[1];
   bench_count(BENCH_SERVCMP_DEREF, 1);
   // TODO: SERV_WILDCARD, SERV_FOR_NODOTS, SERV_LITERAL_ADDRESS etc
-  return hostname_order(server_domain(as), server_domain(bs));
+  return dneecmp(server_dneedle(as), server_dneedle(bs));
 }
 
 bench_wrap4(BENCH_BUILD_SERVER_ARRAY, build_server_array, (), (void))
@@ -252,18 +275,18 @@ void bench_mangle(build_server_array) (void)
   uintptr_t *p = wormb_data_begin(w);
   for (serv = daemon->servers; serv && p != wormb_data_end(w); p += 2, serv = serv->next)
     {
-      const uintptr_t hash = bp_hash(server_domain(serv));
+      const uintptr_t hash = server_dneehash(serv);
       serv->domhash16 = hash & lomask;
-      p[0] = hash;
+      p[0] = (hash & sortmask); // XXX: sortmask?
       p[1] = (uintptr_t)serv;
     }
   assert(!serv);
   assert(!daemon->local_domains || p != wormb_data_end(w));
   for (serv = daemon->local_domains; serv && p != wormb_data_end(w); p += 2, serv = serv->next)
     {
-      const uintptr_t hash = bp_hash(server_domain(serv));
+      const uintptr_t hash = server_dneehash(serv);
       serv->domhash16 = hash & lomask;
-      p[0] = hash;
+      p[0] = (hash & sortmask); // XXX: sortmask?
       p[1] = (uintptr_t)serv;
     }
   assert(!serv);
@@ -374,28 +397,30 @@ void bench_mangle(build_server_array) (void)
 bench_wrap5(BENCH_LOOKUP_DOMAIN, int, lookup_domain, (domain, flags, lowout, highout), (char *domain, int flags, int *lowout, int *highout))
 int bench_mangle(lookup_domain) (char *domain, int flags, int *lowout, int *highout)
 {
-  int rc, crop_query, nodots;
+  int rc, crop_query;
   ssize_t qlen;
   int try = 0, high = 0, low = 0;
   (void)high;
   (void)low;
   int nlow = 0, nhigh = 0;
-  char *cp, *qdomain = domain;
+  char *qdomain = domain;
+
+  const int needlen = do_dneedle(daemon->dneebuff, qdomain, DNEEDLE_SIZEOF_MAX);
+  if (needlen < 0)
+    return 0;
 
   /* may be no configured servers. */
   // FIXME: no-servers is not supported yet
   if (wormb_capacity(daemon->serverhash) == 0)
     return 0;
-  
-  /* find query length and presence of '.' */
-  for (cp = qdomain, nodots = 1, qlen = 0; *cp; qlen++, cp++)
-    if (*cp == '.')
-      nodots = 0;
 
+  const struct dneedle_aligned* const needle = daemon->dneebuff;
+  /* find query length and presence of '.' */
+  qlen = needlen;
+  const int needledots = !!memchr(needle, '.', needlen);
   /* Handle empty name, and searches for DNSSEC queries without
      diverting to NODOTS servers. */
-  if (qlen == 0 || flags & F_DNSSECOK)
-    nodots = 0;
+  const int nodots = (qlen == 0 || flags & F_DNSSECOK) ? 0 : !needledots;
 
   /* Search shorter and shorter RHS substrings for a match */
   while (qlen >= 0)
@@ -461,8 +486,7 @@ int bench_mangle(lookup_domain) (char *domain, int flags, int *lowout, int *high
 	    }
 	};
 #endif
-      uintptr_t hash = bp_hash(qdomain);
-      size_t ndx = server_bfind(daemon->serverhash, hash, qdomain);
+      size_t ndx = server_bfind(daemon->serverhash, needle, qlen);
       if (ndx != SIZE_MAX)
       {
 	rc = 0;
@@ -557,7 +581,7 @@ int server_samegroup(struct server *a, struct server *b)
   const uint16_t mask = SERV_WILDCARD | SERV_FOR_NODOTS;
   return a->domhash16 == b->domhash16
     && (a->flags & mask) == (b->flags & mask)
-    && hostname_order(server_domain(a), server_domain(b)) == 0;
+    && serverp_same_domain(a, b);
 }
 
 int filter_servers(int seed, int flags, int *lowout, int *highout)
@@ -939,7 +963,13 @@ static struct server* server_alloc(u16 flags, const char *domain)
       char *alloc_domain = canonicalise((char *)domain, NULL);
       if (!alloc_domain)
 	return NULL;
-      const size_t domsz = strlen(alloc_domain) + 1;
+      const int domsz = strlen(alloc_domain) + 1;
+      char needle[domsz];
+      if (do_dneedle(needle, alloc_domain, domsz) != domsz - 1)
+	{
+	  free(alloc_domain);
+	  return NULL;
+	}
       const size_t total = max_size(domoff + domsz, servsz);
       ret = whine_realloc(alloc_domain, total);
       if (!ret)
@@ -947,19 +977,18 @@ static struct server* server_alloc(u16 flags, const char *domain)
 	  free(alloc_domain);
 	  return NULL;
         }
-      memmove(((char*)ret) + domoff, ret, domsz); /* server_domain needs ->flags */
       memset(ret, 0, domoff);
       ret->flags = flags;
+      memcpy((void*)server_dneedle(ret), needle, domsz); /* server_domain needs ->flags */
     }
   else
     {
-      const size_t domsz = strlen(domain) + 1;
-      const size_t total = max_size(domoff + domsz, servsz);
+      const size_t total = max_size(domoff + 1, servsz);
       ret = whine_malloc(total);
       if (!ret)
 	return NULL;
       ret->flags = flags;
-      memcpy(server_domain(ret), domain, domsz);
+      memcpy((void*)server_dneedle(ret), "", 1);
     }
   return ret;
 }
@@ -1011,7 +1040,7 @@ int add_update_server(int flags,
 	  {
 	    tmp = serv->next;
 	    if ((serv->flags & SERV_MARK) &&
-		hostname_isequal(server_domain(alloc_serv), server_domain(serv)))
+		serverp_same_domain(alloc_serv, serv))
 	      {
 		/* Need to move down? */
 		if (serv->next)
