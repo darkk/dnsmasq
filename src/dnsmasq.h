@@ -262,6 +262,8 @@ inline static int ctzptr(uintptr_t p)
 }
 #endif // __has_builtin(builtin_ctz_ptr)
 
+inline static int log2ptr(uintptr_t nz) { return PTRBITS - 1 - clzptr(nz); }
+
 #define ADDRSTRLEN INET6_ADDRSTRLEN
 
 /* Async event queue */

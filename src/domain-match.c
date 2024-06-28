@@ -29,6 +29,36 @@ static struct server* server_alloc(u16 flags, const char *domain);
 # define server_loops(serv) (0)
 #endif
 
+static int ptr_per_cacheline(void)
+{
+  static int ret;
+  if (ret)
+    return ret;
+  int opts[] = {
+#ifdef _SC_LEVEL1_DCACHE_LINESIZE
+    _SC_LEVEL1_DCACHE_LINESIZE,
+#endif
+#ifdef _SC_LEVEL2_CACHE_LINESIZE
+    _SC_LEVEL2_CACHE_LINESIZE,
+#endif
+#ifdef _SC_LEVEL3_CACHE_LINESIZE
+    _SC_LEVEL3_CACHE_LINESIZE,
+#endif
+#ifdef _SC_LEVEL4_CACHE_LINESIZE
+    _SC_LEVEL4_CACHE_LINESIZE,
+#endif
+  };
+  long cacheline = LONG_MAX, val;
+  for (unsigned i = 0; i < countof(opts); i++)
+    if (val = sysconf(opts[i]), 0 < val && val < cacheline)
+      cacheline = val;
+  // Fallback value is a wild guess that is based on a few machines around me:
+  // Intel(R) Core(TM) i7-6600U    64 bytes, 64-bit void*
+  // MediaTek MT7620N ver:2 eco:6  32 bytes, 32-bit void*
+  ret = (cacheline != LONG_MAX) ? cacheline / sizeof(uintptr_t) : 8;
+  return ret;
+}
+
 static inline uintptr_t worm_mask(void* ptr, uintptr_t key, const struct worm_bsearch *w)
 {
   const uintptr_t srot = rotrightptr((uintptr_t)ptr ^ w->ptrxor, w->ptrwrotr);
@@ -287,12 +317,16 @@ void bench_mangle(build_server_array) (void)
   // authentication, but ARMv8.3 is far far away from me and my ancient
   // OpenWRT-capable routers.
 
-  // Magic number `3` comes from assumption that the machine has 8 (1<<3) pointers per cacheline.
   // Partiion that does nothing to save an extra cachemiss is a total waste of RAM.
-  const int maxpartbits = MAX(PTRBITS - clzptr(count) - 3, 0);
-  const int defpartbits = MAX(PTRBITS - clzptr(count) - ((PTRBITS == 64) ? 7 : 6), 0); // ~1 bit per server
-  const int config_partbits = -1;
-  const int partbits = config_partbits >= 0 ? MIN(config_partbits, maxpartbits) : defpartbits;
+  const int maxpartbits = MAX(PTRBITS - clzptr(count) - log2ptr(ptr_per_cacheline()), 0);
+  // ~1 bit per server is `log2(count / CHAR_BIT / sizeof(void*))` bits as a lookup index.
+  // It equals `log2(count / CHAR_BIT / (PTRBITS / CHAR_BIT))`.
+  // It equals `log2(count) - log2(PTRBITS)` estimated as ceil(...) further.
+  // It equals `(PTRBITS - clz(count)) - (PTRBITS - 1 - clz(PTRBITS))`.
+  // It equals `PTRBITS - clz(count) - PTRBITS + 1 + clz(PTRBITS)`.
+  // It equals `1 + clz(PTRBITS) - clz(count)`.
+  const int defpartbits = MAX(1 + clzptr(PTRBITS) - clzptr(count), 0);
+  const int partbits = MIN(defpartbits, maxpartbits);
   const u8 rotr = bestrotright(ptr0 | ptr1, partbits);
   const uintptr_t keymask = rotrightptr(ptr0 | ptr1, rotr) & (UINTPTR_MAX >> partbits);
   const int lobits = MIN(ctzptr(keymask), 16); // low bits usable for domhash16
@@ -345,7 +379,7 @@ void bench_mangle(build_server_array) (void)
   // - (+1) for partbits lookup
   // - (+PTRBITS - clzptr(count)) as ~ ceil(log2(count))
   // - (-3) as a guess for log2(sizeof(cacheline) / sizeof(void*)), the final "hops" are short
-  const int bfind_cost = MAX(1 + PTRBITS - clzptr(count) - partbits - 3, 1);
+  const int bfind_cost = MAX(1 + PTRBITS - clzptr(count) - partbits - log2ptr(ptr_per_cacheline()), 1);
   const int do_in_loop = !(count_servers < count / bfind_cost);
   w->zero = SIZE_MAX;
   for (uintptr_t *begin = wormb_data_begin(w), i = 0; i < count; i++)
