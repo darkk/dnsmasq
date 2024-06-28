@@ -1,3 +1,6 @@
 [submodule "debian"]
 	path = debian
 	url = git://thekelleys.org.uk/dnsmasq-debian.git
+[submodule "aceunit"]
+	path = aceunit
+	url = https://github.com/christianhujer/aceunit.git
