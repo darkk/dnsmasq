@@ -177,7 +177,7 @@ extern int capget(cap_user_header_t header, cap_user_data_t data);
 //   - <\000> and <\.> are converted to <Z> and <D> within labels
 //   - <.> is used as label separator
 //   - example.com. is reversed to moc.elpmaxe, root <\.> is not stored
-//   - the domain name is NUL-terminated
+//   - the domain name is NUL-terminated, nothing is "escaped"
 // So 19 on-wire bytes "<5>a<0>b.c<7>example<3>com<0>" become
 // 18 bytes in dneedle: "moc.example.cDbZa<0>".
 // Length is not stored to make memory reads aligned while computing hash(suffix).
@@ -187,6 +187,8 @@ extern int capget(cap_user_header_t header, cap_user_data_t data);
 #define DNEEDLE_LEN_MAX    (DNEEDLE_SIZEOF_MAX - 1)
 struct dneedle;
 struct dneedle_aligned;
+// (+4) is for hash_questions()
+#define DNEEBUFF_SIZEOF (DNEEDLE_SIZEOF_MAX + 4)
 
 #define BPD_PTROPS_SOURCE 1
 #include "bpdhash.h"
@@ -928,7 +930,11 @@ struct dyndir {
 #define FREC_HAS_EXTRADATA    512
 #define FREC_HAS_PHEADER     1024
 
-#define HASH_SIZE 32 /* SHA-256 digest size */
+#if defined(HAVE_DNSSEC) || defined(HAVE_CRYPTOHASH)
+#  define HASH_SIZE (256/8) /* SHA-256 digest size */
+#else
+#  define HASH_SIZE (128/8) /* SipHash digest size */
+#endif
 
 struct frec {
   struct frec_src {
@@ -1395,7 +1401,7 @@ extern struct daemon {
   char *packet; /* packet buffer */
   int packet_buff_sz; /* size of above */
   char *namebuff; /* MAXDNAME size buffer */
-  struct dneedle_aligned *dneebuff;
+  struct dneedle_aligned *dneebuff; /* DNEEBUFF_SIZEOF size buffer */
   char *workspacename;
 #ifdef HAVE_DNSSEC
   char *keyname; /* MAXDNAME size buffer */
