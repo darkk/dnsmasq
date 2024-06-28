@@ -81,6 +81,7 @@ int extract_name(struct dns_header *header, size_t plen, unsigned char **pp,
       else if (label_type == 0x00)
 	{ /* label_type = 0 -> label. */
 	  namelen += l + 1; /* include period */
+	  // TODO: will it be happy with 1024 octets of DNAME?...
 	  if (namelen >= MAXDNAME)
 	    return 0;
 	  if (!CHECK_LEN(header, p, plen, l))
