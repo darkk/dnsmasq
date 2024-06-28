@@ -1627,8 +1627,6 @@ static inline uintptr_t randptr(void) { return rand32(); }
 #elif PTRBITS == 64
 static inline uintptr_t randptr(void) { return rand64(); }
 #endif
-uintptr_t bp_hash(const char *name);
-uintptr_t bp_memhash(const void *name, size_t n);
 struct worm_bsearch* wormb_alloc(int partbits, size_t nmemb);
 struct worm_bsearch* wormb_realloc(struct worm_bsearch *w, size_t nmemb);
 static inline size_t wormb_npart(struct worm_bsearch *w) { return (size_t)1u << w->partbits; }

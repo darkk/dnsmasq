@@ -3,19 +3,6 @@
 
 #include <stdint.h>
 
-void bpd_init();
-uintptr_t bpdldhhs(const char *ldh);
-uintptr_t bpdbinhm(const void *src, unsigned int n);
-uintptr_t bpdbinh3(const void *src, unsigned int n, uintptr_t seed);
-
-#ifdef BPD_SMHASHER
-void bpd_test(const void *src, const int n, const uint32_t seed32, void *out); {
-  uintptr_t seec = sizeof(uintptr_t) == 8 ? UINT64_C(0xc31639d355ce5a2a) : UINT32_C(0x55ce5a2a);
-  uintptr_t seep = bpdbinh3(&seed32, sizeof(seed32), seec);
-  *(uintptr_t*)out = bpdbinh3(blob, len, seep);
-}
-#endif // BPD_SMHASHER
-
 #ifdef BPD_PTROPS_SOURCE
 
 #include <limits.h>
