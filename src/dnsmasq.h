@@ -113,6 +113,7 @@ typedef unsigned long long u64;
 #include <stdio.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdalign.h>
 #include <string.h>
 #include <stdlib.h>
 #include <fcntl.h>
@@ -775,8 +776,22 @@ static inline /* const */ char* server_domain(const struct server *s) {
 #endif
 
 static inline const struct dneedle* server_dneedle(const struct server *s) {
-  return (struct dneedle *)(((u8*)s) + server_offsetof_domain(s->flags));
+  return (const struct dneedle *)(((u8*)s) + server_offsetof_domain(s->flags));
 }
+
+#if 0
+static inline const struct dneedle_aligned* server_dneedle_aligned(const struct server *s) {
+  static_assert(alignof(struct server) == alignof(uintptr_t));
+  static_assert(offsetof(struct server, domain) % alignof(uintptr_t) == 0);
+  static_assert(alignof(struct serv_addr6) == alignof(uintptr_t));
+  static_assert(offsetof(struct serv_addr6, domain) % alignof(uintptr_t) == 0);
+  static_assert(alignof(struct serv_addr4) == alignof(uintptr_t));
+  static_assert(offsetof(struct serv_addr4, domain) % alignof(uintptr_t) == 0);
+  static_assert(alignof(struct serv_local) == alignof(uintptr_t));
+  static_assert(offsetof(struct serv_local, domain) % alignof(uintptr_t) == 0);
+  return (const struct dneedle_aligned*)(((u8*)s) + server_offsetof_domain(s->flags));
+}
+#endif
 
 #define server_dneehash(s) (dn_hazh(server_dneedle(s)))
 

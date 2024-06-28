@@ -45,7 +45,7 @@ static inline void* worm_unmask(uintptr_t val, const struct worm_bsearch *w)
 struct serv_bfind_ctx {
   struct worm_bsearch w;
   uintptr_t hash;
-  struct dneedle *needle;
+  const struct dneedle *needle;
   unsigned len;
 };
 
@@ -93,6 +93,8 @@ static int server_bfind_cmp(const void *ctxv, const void *val)
   return cmp_dneedle_server(ctx->needle, ctx->len, s);
 }
 
+static size_t server_bfind_raw(struct worm_bsearch *w, const uintptr_t hash, const struct dneedle* needle, unsigned qlen);
+
 static size_t server_bfind(struct worm_bsearch *w, const struct dneedle_aligned *needle, unsigned qlen)
 {
   if (qlen == 0 || *(const char*)needle == '\0')
@@ -102,6 +104,26 @@ static size_t server_bfind(struct worm_bsearch *w, const struct dneedle_aligned 
       return w->zero;
     }
   const uintptr_t hash = dna_hash(needle, qlen);
+  return server_bfind_raw(w, hash, (const struct dneedle*)needle, qlen);
+}
+
+static size_t server_bfind_root(struct worm_bsearch *w)
+{
+  return server_bfind_raw(w, dn_hash(NULL, 0), NULL, 0);
+}
+
+static size_t server_bfind_self(struct worm_bsearch *w, const struct server *serv)
+{
+  if (server_domain_empty(serv))
+    return w->zero;
+  const struct dneedle *needle = server_dneedle(serv); // not aligned!
+  const unsigned qlen = strlen((const char*)needle);
+  const uintptr_t hash = dn_hash(needle, qlen);
+  return server_bfind_raw(w, hash, needle, qlen);
+}
+
+static size_t server_bfind_raw(struct worm_bsearch *w, const uintptr_t hash, const struct dneedle* needle, unsigned qlen)
+{
   const size_t partition = w->partbits ? (hash >> (PTRBITS - w->partbits)) : 0;
   uintptr_t *table = wormb_data_begin(w);
   uintptr_t *begin = wormb_part_begin(w, partition);
@@ -110,7 +132,7 @@ static size_t server_bfind(struct worm_bsearch *w, const struct dneedle_aligned 
   struct serv_bfind_ctx ctx;
   memcpy(&ctx.w, w, sizeof(*w));
   ctx.hash = hash;
-  ctx.needle = (struct dneedle *)needle;
+  ctx.needle = needle;
   ctx.len = qlen;
   if (log_cmp)
     my_syslog(LOG_INFO, "cmp: %s[-%d:] (%p) bsearch...", dneetoa(ctx.needle), ctx.len, ctx.hash);
@@ -226,6 +248,7 @@ void bench_mangle(build_server_array) (void)
   uintptr_t count = 0; // TODO: consider `uint` and definition of clzui()
   uintptr_t ptr0 = ~(uintptr_t)0;
   uintptr_t ptr1 = ~(uintptr_t)0;
+  uintptr_t count_servers = 0;
 
   struct benchts bts;
   bench_start(&bts);
@@ -243,6 +266,7 @@ void bench_mangle(build_server_array) (void)
 	  ptr0 &= ~(uintptr_t)serv;
 	  ptr1 &= (uintptr_t)serv;
 	  count++;
+	  count_servers++;
 	  if (serv->flags & SERV_WILDCARD)
 	    daemon->server_has_wildcard = 1;
 	}
@@ -317,27 +341,38 @@ void bench_mangle(build_server_array) (void)
 #endif
   bench_step(&bts, "bsa-qsort");
 
+  // Cost is expressed as an estimate of cache-misses:
+  // - (+1) for partbits lookup
+  // - (+PTRBITS - clzptr(count)) as ~ ceil(log2(count))
+  // - (-3) as a guess for log2(sizeof(cacheline) / sizeof(void*)), the final "hops" are short
+  const int bfind_cost = MAX(1 + PTRBITS - clzptr(count) - partbits - 3, 1);
+  const int do_in_loop = !(count_servers < count / bfind_cost);
   w->zero = SIZE_MAX;
-  for (uintptr_t *dst = wormb_data_begin(w), *src = dst, i = 0; src != wormb_data_end(w); src += 2, dst++, i++)
+  for (uintptr_t *begin = wormb_data_begin(w), i = 0; i < count; i++)
     {
-      serv = (struct server *)src[1];
-      const uintptr_t hash = src[0];
-      if (server_sizeof(serv->flags) == sizeof(struct server))
-	serv->arrayposn = i;
-      if (w->zero == SIZE_MAX && server_domain_empty(serv))
-	w->zero = i;
-      if (partbits)
+      const uintptr_t hash = begin[i*2];
+      serv = (struct server *)begin[i*2+1];
+      if (do_in_loop)
 	{
-	  size_t partition = hash >> (PTRBITS - partbits);
-	  if (partition != ~(SIZE_MAX << partbits))
-	    w->tabluint[partition] = i+1;
-	  // TODO: should it be optimised?
+	  if (server_sizeof(serv->flags) == sizeof(struct server))
+	    serv->arrayposn = i;
+	  if (w->zero == SIZE_MAX && server_domain_empty(serv))
+	    w->zero = i;
 	}
-      *dst = worm_mask(serv, hash, w);
+      const size_t partition = partbits ? hash >> (PTRBITS - partbits) : 0;
+      if (partition != ~(SIZE_MAX << partbits))
+	w->tabluint[partition] = (i+1) * sizeof(uintptr_t);
+      begin[i] = worm_mask(serv, hash, w);
     }
   w = wormb_realloc(w, count);
   for (size_t partition = 0; partition < wormb_npart(w) - 1; ++partition)
-    w->tabluint[partition] = (uintptr_t)(&wormb_data_begin(w)[w->tabluint[partition]]);
+    w->tabluint[partition] += (uintptr_t)wormb_data_begin(w);
+  if (!do_in_loop)
+    {
+      w->zero = server_bfind_root(w);
+      for (serv = daemon->servers; serv; serv = serv->next)
+	serv->arrayposn = server_bfind_self(w, serv);
+    }
   assert(wormb_data_end(w) - wormb_data_begin(w) == (ptrdiff_t)count);
   bench_step(&bts, "bsa-partbits");
 
