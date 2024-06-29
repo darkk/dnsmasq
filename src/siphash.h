@@ -14,12 +14,22 @@
    this software. If not, see
    <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
+#ifndef SIPHASH_H
+#define SIPHASH_H
 
 #include <inttypes.h>
 #include <string.h>
 
 #ifdef SIPHASH_STATIC
-static
+#  define SIPHASH_MAYBE_STATIC static inline
+#else
+#  define SIPHASH_MAYBE_STATIC
 #endif
+SIPHASH_MAYBE_STATIC
 int siphash(const void *in, const size_t inlen, const void *k, uint8_t *out,
             const size_t outlen);
+SIPHASH_MAYBE_STATIC
+int siphashal64hbo(const uint64_t *in, const size_t inlen, const uint64_t *k,
+                   uint64_t *out, const size_t outlen);
+
+#endif // SIPHASH_H

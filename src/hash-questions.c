@@ -84,6 +84,7 @@ unsigned char *hash_questions(struct dns_header *header, size_t plen, char *name
 union shhh {
   unsigned char bytes[16];
   uintptr_t p[16 / (PTRBITS / 8)];
+  uint64_t u64[16 / sizeof(uint64_t)];
 };
 
 static union shhh secret;
@@ -124,7 +125,8 @@ unsigned char *hash_questions(struct dns_header *header, size_t plen, char *name
       memcpy(dna + dlen, p, 4);
 
       union shhh qhash;
-      siphash(dna, dlen + 4, secret.bytes, qhash.bytes, sizeof(qhash));
+      // dneedle_aligned is malloc()'ed, so it's aligned
+      siphashal64hbo((uint64_t*)dna, dlen + 4, secret.u64, qhash.u64, sizeof(qhash));
       for (unsigned i = 0; i < countof(qhash.p); i++)
 	digest.p[i] ^= qhash.p[i];
 

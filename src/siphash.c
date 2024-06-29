@@ -16,6 +16,7 @@
  */
 
 #include "siphash.h"
+#include <stdalign.h>
 #include <assert.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -29,6 +30,8 @@
 #endif
 
 #define ROTL(x, b) (uint64_t)(((x) << (b)) | ((x) >> (64 - (b))))
+
+#ifndef SIPHASH_ALIGNED_64_NATIVE_ENDIAN
 
 #define U32TO8_LE(p, v)                                                        \
     (p)[0] = (uint8_t)((v));                                                   \
@@ -45,6 +48,16 @@
      ((uint64_t)((p)[2]) << 16) | ((uint64_t)((p)[3]) << 24) |                 \
      ((uint64_t)((p)[4]) << 32) | ((uint64_t)((p)[5]) << 40) |                 \
      ((uint64_t)((p)[6]) << 48) | ((uint64_t)((p)[7]) << 56))
+
+#else
+
+#undef U32TO8_LE
+#undef U64TO8_LE
+#undef U8TO64_LE
+#define U64TO8_LE(p, v) do { *(uint64_t*)(p) = (v); } while (0)
+#define U8TO64_LE(p)    (*(uint64_t*)(p))
+
+#endif // SIPHASH_ALIGNED_64_NATIVE_ENDIAN
 
 #define SIPROUND                                                               \
     do {                                                                       \
@@ -86,8 +99,10 @@
     *out: pointer to output data (write-only), outlen bytes must be allocated
     outlen: length of the output in bytes, must be 8 or 16
 */
-#ifdef SIPHASH_STATIC
-static
+#ifdef SIPHASH_ALIGNED_64_NATIVE_ENDIAN
+static inline
+#else
+SIPHASH_MAYBE_STATIC
 #endif
 int siphash(const void *in, const size_t inlen, const void *k, uint8_t *out,
             const size_t outlen) {
@@ -95,6 +110,9 @@ int siphash(const void *in, const size_t inlen, const void *k, uint8_t *out,
     const unsigned char *ni = (const unsigned char *)in;
     const unsigned char *kk = (const unsigned char *)k;
 
+#ifdef SIPHASH_ALIGNED_64_NATIVE_ENDIAN
+    assert(!(((uintptr_t)in) & (alignof(uint64_t)-1)));
+#endif
     assert((outlen == 8) || (outlen == 16));
     uint64_t v0 = UINT64_C(0x736f6d6570736575);
     uint64_t v1 = UINT64_C(0x646f72616e646f6d);
@@ -186,3 +204,15 @@ int siphash(const void *in, const size_t inlen, const void *k, uint8_t *out,
 
     return 0;
 }
+
+#ifndef SIPHASH_ALIGNED_64_NATIVE_ENDIAN
+#define SIPHASH_ALIGNED_64_NATIVE_ENDIAN
+#define siphash(p1, p2, p3, p4, p5) siphashal64hbo_(p1, p2, p3, p4, p5)
+#include "siphash.c"
+#undef siphash
+SIPHASH_MAYBE_STATIC
+int siphashal64hbo(const uint64_t *in, const size_t inlen, const uint64_t *k,
+                   uint64_t *out, const size_t outlen) {
+    return siphashal64hbo_((void*)in, inlen, (void*)k, (void*)out, outlen);
+}
+#endif // SIPHASH_ALIGNED_64_NATIVE_ENDIAN
