@@ -264,6 +264,31 @@ inline static int ctzptr(uintptr_t p)
 
 inline static int log2ptr(uintptr_t nz) { return PTRBITS - 1 - clzptr(nz); }
 
+struct bf254 {
+  uintptr_t p[256 / CHAR_BIT / sizeof(uintptr_t)];
+};
+
+static inline void bf_set(struct bf254 *bf, u8 n)
+{
+  const unsigned nd = n >> log2ptr(PTRBITS);
+  const unsigned sh = n & (PTRBITS - 1);
+  bf->p[nd] |= UINTMAX_C(1) << sh;
+  bf->p[countof(bf->p)-1] |= UINTMAX_C(1) << (PTRBITS - 1);
+}
+
+static inline bool bf_nonzero(struct bf254 *bf)
+{
+  return bf->p[countof(bf->p)-1] & (UINTMAX_C(1) << (PTRBITS - 1));
+}
+
+static inline uintptr_t bf_bit(struct bf254 *bf, u8 n)
+{
+  assert(n <= 254);
+  const unsigned nd = n >> log2ptr(PTRBITS);
+  const unsigned sh = n & (PTRBITS - 1);
+  return bf->p[nd] & (UINTMAX_C(1) << sh);
+}
+
 #define ADDRSTRLEN INET6_ADDRSTRLEN
 
 /* Async event queue */
@@ -1353,6 +1378,7 @@ extern struct daemon {
   struct server *servers, *servers_tail, *local_domains;
   struct rebind_domain *no_rebind;
   int server_has_wildcard;
+  struct bf254 dombits;
   struct worm_bsearch *serverhash;
   struct ipsets *ipsets, *nftsets;
   u32 allowlist_mask;

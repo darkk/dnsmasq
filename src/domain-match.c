@@ -343,11 +343,15 @@ void bench_mangle(build_server_array) (void)
   w->ptrwrotr = rotr;
   bench_step(&bts, "bsa-alloc");
 
+  memset(&daemon->dombits, 0, sizeof(daemon->dombits));
   assert(wormb_data_end(w) - wormb_data_begin(w) == 2 * (ptrdiff_t)count);
   uintptr_t *p = wormb_data_begin(w);
   for (serv = daemon->servers; serv && p != wormb_data_end(w); p += 2, serv = serv->next)
     {
-      const uintptr_t hash = server_dneehash(serv);
+      const struct dneedle *dn = server_dneedle(serv);
+      const unsigned dlen = strlen((const char*)dn);
+      bf_set(&daemon->dombits, dlen);
+      const uintptr_t hash = dn_hash(dn, dlen);
       serv->domhash16 = hash & lomask;
       p[0] = (hash & sortmask); // XXX: sortmask?
       p[1] = (uintptr_t)serv;
@@ -356,7 +360,10 @@ void bench_mangle(build_server_array) (void)
   assert(!daemon->local_domains || p != wormb_data_end(w));
   for (serv = daemon->local_domains; serv && p != wormb_data_end(w); p += 2, serv = serv->next)
     {
-      const uintptr_t hash = server_dneehash(serv);
+      const struct dneedle *dn = server_dneedle(serv);
+      const unsigned dlen = strlen((const char*)dn);
+      bf_set(&daemon->dombits, dlen);
+      const uintptr_t hash = dn_hash(dn, dlen);
       serv->domhash16 = hash & lomask;
       p[0] = (hash & sortmask); // XXX: sortmask?
       p[1] = (uintptr_t)serv;
@@ -575,7 +582,9 @@ int bench_mangle(lookup_domain) (char *domain, int flags, int *lowout, int *high
 	    }
 	};
 #endif
-      size_t ndx = server_bfind(daemon->serverhash, needle, qlen);
+      const size_t ndx = !daemon->server_has_wildcard && !bf_bit(&daemon->dombits, qlen)
+	  ? SIZE_MAX
+	  : server_bfind(daemon->serverhash, needle, qlen);
       if (ndx != SIZE_MAX)
       {
 	rc = 0;
