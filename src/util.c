@@ -38,23 +38,65 @@
 #include <math.h>
 #endif
 
+#ifndef HAVE_GETENTROPY
+#define getentropy(a, b) dumb_getentropy(a, b)
+// Non-standard libc getentropy() might use getrandom() avoiding filesystem
+// access, that's great for jails and chroots. However, a fallback
+// implemetation is required for older systems that have no getentropy()
+// in libc (yet).  Also, getentropy() might block if the kernel has
+// not initialized random pool yet. But I don't expect dnsmasq _server_
+// to be ever started that early during the boot process.
+static int dumb_getentropy(void *buffer, size_t length)
+{
+  const int fd = open(RANDFILE, O_RDONLY);
+  if (fd == -1)
+    return -1;
+  const int okay = read_write(fd, buffer, length, 1);
+  close(fd);
+  return okay ? 0 : -1;
+}
+#endif // HAVE_GETENTROPY
+
 /* SURF random number generator */
 
-static u32 seed[32];
-static u32 in[12];
+static struct surf_state {
+  u32 seed[32];
+  u32 in[12];
+} surfst;
 static u32 out[8];
 static int outleft = 0;
 
 void rand_init()
 {
-  int fd = open(RANDFILE, O_RDONLY);
-  
-  if (fd == -1 ||
-      !read_write(fd, (unsigned char *)&seed, sizeof(seed), 1) ||
-      !read_write(fd, (unsigned char *)&in, sizeof(in), 1))
-    die(_("failed to seed the random number generator: %s"), NULL, EC_MISC);
-  
-  close(fd);
+  const u32 * const in = surfst.in;
+  const bool reseed = in[0] || in[1] || in[2] || in[3] || in[4] || in[5] ||
+                      in[6] || in[7] || in[8] || in[9] || in[10] || in[11];
+  struct surf_state next;
+  const unsigned bytes = reseed ? sizeof(next.seed) : sizeof(next);
+  if (getentropy(&next, bytes) != 0)
+    {
+      if (!reseed)
+	die(_("failed to seed the random number generator: %s"), NULL, EC_MISC);
+      else
+	my_syslog(LOG_ERR, _("failed to reseed the random number generator: %s"), strerror(errno));
+    }
+  static_assert(surfst.in == surfst.seed + countof(surfst.seed)); // No weird alignment gaps.
+  for (unsigned int i = 0; i < bytes / sizeof(next.seed[0]); i++)
+    surfst.seed[i] ^= next.seed[i];
+}
+
+static void rand_atfork(pid_t fpid)
+{
+  struct surf_state next;
+  for (unsigned int i = 0; i < countof(next.seed); i++)
+    next.seed[i] = rand32();
+  // Child reseeds the state with generated values.  Parent skips those values
+  // explicitly as they might be exposed to an external observer and used
+  // to guess something about PRNG of the child. pthread_atfork() might be
+  // a better way to wrap fork(), but it requires -pthread besides libc.
+  if (fpid == 0)
+    for (unsigned int i = 0; i < countof(next.seed); i++)
+      surfst.seed[i] ^= next.seed[i];
 }
 
 #define ROTATE(x,b) (((x) << (b)) | ((x) >> (32 - (b))))
@@ -62,6 +104,8 @@ void rand_init()
 
 static void surf(void)
 {
+  u32 * const in = surfst.in;
+  const u32 * const seed = surfst.seed;
   u32 t[12]; u32 x; u32 sum = 0;
   int r; int i; int loop;
 
@@ -101,6 +145,30 @@ u64 rand64(void)
     surf();
   outleft -= 2;
   return (u64)out[outleft+1] + (((u64)out[outleft]) << 32);
+}
+
+unsigned int should_reseed(time_t last, time_t now)
+{
+  static unsigned int reseed_div, reseed_off;
+  if (reseed_div == 0)
+    {
+      const unsigned int lo = 2777, hi = 4451; /* every hour or so */
+      const unsigned char prim[] = {2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41,
+	43, 47, 53, 59, 61}; /* sqrt(4451) ~ 66.7 */
+      for (bool is_prime = false; !is_prime; )
+	{
+	  // 202 primes in the interval, 12% probability to get a prime
+	  reseed_div = lo + rand32() % (hi - lo + 1);
+	  is_prime = true;
+	  for (int i = 0; is_prime && i < countof(prim); i++)
+	    if (reseed_div % ((unsigned int)prim[i]) == 0)
+	      is_prime = false;
+	}
+      reseed_off = rand32() % reseed_div;
+    }
+  last += reseed_off;
+  now += reseed_off;
+  return (last / reseed_div != now / reseed_div);
 }
 
 struct worm_bsearch* wormb_alloc(int partbits, size_t nmemb)
@@ -350,6 +418,14 @@ void safe_pipe(int *fd, int read_noblock)
       !fix_fd(fd[1]) ||
       (read_noblock && !fix_fd(fd[0])))
     die(_("cannot create pipe: %s"), NULL, EC_MISC);
+}
+
+pid_t my_fork()
+{
+  const pid_t fpid = fork();
+  if (fpid != -1)
+    rand_atfork(fpid);
+  return fpid;
 }
 
 void *whine_malloc(size_t size)

@@ -41,7 +41,7 @@ static void tcp_init(void);
 
 int main (int argc, char **argv)
 {
-  time_t now;
+  time_t now = dnsmasq_time(), reseed_hshqs = 0, reseed_rand = 0;
   struct sigaction sigact;
   struct iname *if_tmp;
   int piperead, pipefd[2], err_pipe[2];
@@ -103,7 +103,7 @@ int main (int argc, char **argv)
 
   umask(022); /* known umask, create leases and pid files as 0644 */
 
-  rand_init(); /* Must precede read_opts() */
+  rand_init(), reseed_rand = now; /* Must precede read_opts() */
   dn_init();
   
   read_opts(argc, argv, compile_opts);
@@ -413,7 +413,7 @@ int main (int argc, char **argv)
     {
       cache_init();
       blockdata_init();
-      hash_questions_init();
+      hash_questions_init(), reseed_hshqs = now;
 
       /* Scale random socket pool by ftabsize, but
 	 limit it based on available fds. */
@@ -610,7 +610,7 @@ int main (int argc, char **argv)
 	     When startup is complete we close this and the process terminates. */
 	  safe_pipe(err_pipe, 0);
 	  
-	  if ((pid = fork()) == -1)
+	  if ((pid = my_fork()) == -1)
 	    /* fd == -1 since we've not forked, never returns. */
 	    send_event(-1, EVENT_FORK_ERR, errno, NULL);
 	   
@@ -635,7 +635,7 @@ int main (int argc, char **argv)
 	  
 	  setsid();
 	 
-	  if ((pid = fork()) == -1)
+	  if ((pid = my_fork()) == -1)
 	    send_event(err_pipe[1], EVENT_FORK_ERR, errno, NULL);
 	 
 	  if (pid != 0)
@@ -1063,7 +1063,7 @@ int main (int argc, char **argv)
   /* Using inotify, have to select a resolv file at startup */
   poll_resolv(1, 0, now);
 #endif
-  
+
   while (1)
     {
       int timeout = fast_retry(now);
@@ -1172,7 +1172,11 @@ int main (int argc, char **argv)
 
 #endif
 
-   
+      if (should_reseed(reseed_rand, now))
+	rand_init(), reseed_rand = now;
+      if (daemon->port != 0 && !daemon->frec_list && should_reseed(reseed_hshqs, now))
+	hash_questions_init(), reseed_hshqs = now;
+
       /* must do this just before do_poll(), when we know no
 	 more calls to my_syslog() can occur */
       set_log_writer();
@@ -1978,7 +1982,7 @@ static void check_dns_listeners(time_t now)
 	      shutdown(confd, SHUT_RDWR);
 	      close(confd);
 	    }
-	  else if (!option_bool(OPT_DEBUG) && pipe(pipefd) == 0 && (p = fork()) != 0)
+	  else if (!option_bool(OPT_DEBUG) && pipe(pipefd) == 0 && (p = my_fork()) != 0)
 	    {
 	      close(pipefd[1]); /* parent needs read pipe end. */
 	      if (p == -1)

@@ -1633,6 +1633,7 @@ static inline uintptr_t randptr(void) { return rand32(); }
 #elif PTRBITS == 64
 static inline uintptr_t randptr(void) { return rand64(); }
 #endif
+unsigned int should_reseed(time_t last, time_t now);
 struct worm_bsearch* wormb_alloc(int partbits, size_t nmemb);
 struct worm_bsearch* wormb_realloc(struct worm_bsearch *w, size_t nmemb);
 static inline size_t wormb_npart(struct worm_bsearch *w) { return (size_t)1u << w->partbits; }
@@ -1656,6 +1657,7 @@ unsigned char *do_rfc1035_name(unsigned char *p, char *sval, char *limit);
 void *safe_malloc(size_t size);
 void safe_strncpy(char *dest, const char *src, size_t size);
 void safe_pipe(int *fd, int read_noblock);
+pid_t my_fork(void);
 void *whine_malloc(size_t size);
 void *whine_realloc(void *ptr, size_t size);
 int sa_len(union mysockaddr *addr);
