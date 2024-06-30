@@ -61,6 +61,8 @@ static void surf(void)
   u32 t[12]; u32 x; u32 sum = 0;
   int r; int i; int loop;
 
+  in[0]++; in[1] += !in[0]; in[2] += !in[1]; in[3] += !in[2];
+
   for (i = 0;i < 12;++i) t[i] = in[i] ^ seed[12 + i];
   for (i = 0;i < 8;++i) out[i] = seed[24 + i];
   x = t[11];
@@ -73,43 +75,27 @@ static void surf(void)
     }
     for (i = 0;i < 8;++i) out[i] ^= t[i + 4];
   }
+
+  outleft = 8;
 }
 
 unsigned short rand16(void)
 {
-  if (!outleft) 
-    {
-      if (!++in[0]) if (!++in[1]) if (!++in[2]) ++in[3];
-      surf();
-      outleft = 8;
-    }
-  
-  return (unsigned short) out[--outleft];
+  return (unsigned short)rand32();
 }
 
 u32 rand32(void)
 {
- if (!outleft) 
-    {
-      if (!++in[0]) if (!++in[1]) if (!++in[2]) ++in[3];
-      surf();
-      outleft = 8;
-    }
-  
-  return out[--outleft]; 
+  if (!outleft)
+    surf();
+  return out[--outleft];
 }
 
 u64 rand64(void)
 {
   if (outleft < 2)
-    {
-      if (!++in[0]) if (!++in[1]) if (!++in[2]) ++in[3];
-      surf();
-      outleft = 8;
-    }
-  
+    surf();
   outleft -= 2;
-
   return (u64)out[outleft+1] + (((u64)out[outleft]) << 32);
 }
 
