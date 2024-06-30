@@ -23,15 +23,8 @@ static int order_servers(struct server *s, struct server *s2);
 /* If the server is USE_RESOLV or LITERAL_ADDRES, it lives on the local_domains chain. */
 #define SERV_IS_LOCAL (SERV_USE_RESOLV | SERV_LITERAL_ADDRESS)
 
-static void build_server_array__(void);
-void build_server_array(void)
-{
-  struct benchts start;
-  bench_start(&start);
-  build_server_array__();
-  bench_sample(BENCH_BUILD_SERVER_ARRAY, &start);
-}
-static void build_server_array__(void)
+bench_wrap4(BENCH_BUILD_SERVER_ARRAY, build_server_array, (), (void))
+void bench_mangle(build_server_array) (void)
 {
   struct server *serv;
   int count = 0;
@@ -109,16 +102,8 @@ static void build_server_array__(void)
    reply of IPv4 or IPV6.
    return 0 if nothing found, 1 otherwise.
 */
-static int lookup_domain__(char *domain, int flags, int *lowout, int *highout);
-int lookup_domain(char *domain, int flags, int *lowout, int *highout)
-{
-  struct benchts start;
-  bench_start(&start);
-  int ret = lookup_domain__(domain, flags, lowout, highout);
-  bench_sample(BENCH_LOOKUP_DOMAIN, &start);
-  return ret;
-}
-static int lookup_domain__(char *domain, int flags, int *lowout, int *highout)
+bench_wrap5(BENCH_LOOKUP_DOMAIN, int, lookup_domain, (domain, flags, lowout, highout), (char *domain, int flags, int *lowout, int *highout))
+int bench_mangle(lookup_domain) (char *domain, int flags, int *lowout, int *highout)
 {
   int rc, crop_query, nodots;
   ssize_t qlen;

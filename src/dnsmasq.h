@@ -1489,6 +1489,26 @@ void bench_count(enum bench_metrics, unsigned int count);
 void bench_loop(enum bench_metrics, struct benchts *start, unsigned int count);
 void bench_log(enum bench_metrics, const char *msg);
 void statm_log(const char *msg);
+#define bench_mangle(fn) fn ## _bench_wrap
+#define bench_wrap4(counter, fn, args, argdecl) \
+  static void bench_mangle(fn) argdecl; \
+  void fn argdecl { \
+    struct benchts start; \
+    bench_start(&start); \
+    bench_mangle(fn) args; \
+    bench_sample(counter, &start); \
+  } \
+  static
+#define bench_wrap5(counter, type, fn, args, argdecl) \
+  static type bench_mangle(fn) argdecl; \
+  type fn argdecl { \
+    struct benchts start; \
+    bench_start(&start); \
+    type ret = bench_mangle(fn) args; \
+    bench_sample(counter, &start); \
+    return ret; \
+  } \
+  static
 #else
 struct benchts { int:0; };
 static inline void bench_start(struct benchts *) { }
@@ -1497,7 +1517,10 @@ static inline void bench_count(enum bench_metrics, unsigned int) { }
 static inline void bench_loop(enum bench_metrics, struct benchts *, unsigned int) { }
 static inline void bench_log(enum bench_metrics, const char *) { }
 static inline void statm_log(const char *) { }
-#endif
+#define bench_mangle(fn) fn
+#define bench_wrap4(counter, fn, args, argdecl)
+#define bench_wrap5(counter, type, fn, args, argdecl)
+#endif // HAVE_DEVTOOLS
 static inline void bench_log_all(void) {
   bench_log(BENCH_DNSMASQ_TIME, "dnsmasq_time()");
   bench_log(BENCH_BUILD_SERVER_ARRAY, "build_server_array()");
