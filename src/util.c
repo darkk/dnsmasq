@@ -101,8 +101,6 @@ u32 rand32(void)
 
 u64 rand64(void)
 {
-  static int outleft = 0;
-
   if (outleft < 2)
     {
       if (!++in[0]) if (!++in[1]) if (!++in[2]) ++in[3];
