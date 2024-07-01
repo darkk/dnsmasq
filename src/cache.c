@@ -228,6 +228,11 @@ static inline
 #endif
 unsigned int cache_hash_uint(char *name)
 {
+  // TODO: while it might be tempting to replace cache_hash_uint() with
+  // do_dneedle()+dn_hash(), it'll lead to a slight performance degradation
+  // as cache_hash_uint() is faster than a naive combination of these two.
+  // So it might be done with overall refactoring that moves do_dneedle()
+  // higher in the call stack.
   unsigned int c, val = 017465; /* Barker code - minimum self-correlation in cyclic shift */
   const unsigned char *mix_tab = (const unsigned char*)typestr; 
 
