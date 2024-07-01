@@ -13,6 +13,8 @@
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
+#ifndef SRC_DNSMASQ_H
+#define SRC_DNSMASQ_H
 
 #define COPYRIGHT "Copyright (c) 2000-2024 Simon Kelley"
 
@@ -2217,3 +2219,4 @@ int add_update_server(int flags,
 		      const char *interface,
 		      const char *domain,
 		      union all_addr *local_addr); 
+#endif // SRC_DNSMASQ_H
