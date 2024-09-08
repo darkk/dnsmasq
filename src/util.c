@@ -34,6 +34,23 @@
 #include <sys/utsname.h>
 #endif
 
+#ifndef HAVE_GETENTROPY
+// Non-standard libc getentropy() might use getrandom() avoiding filesystem access, that's great
+// for jails and chroots.  However, a fallback implemetation is required for older systems that have
+// no getentropy() in libc.  Also, getentropy() might block if the kernel has not initialized random
+// pool yet.  However, dnsmasq is never started that early during the OpenWRT boot process (at least).
+#define getentropy(a, b) getentropy_fallback(a, b)
+static int getentropy_fallback(void *buffer, size_t length)
+{
+  const int fd = open(RANDFILE, O_RDONLY);
+  if (fd == -1)
+    return -1;
+  const int okay = read_write(fd, buffer, length, 1);
+  close(fd);
+  return okay ? 0 : -1;
+}
+#endif // HAVE_GETENTROPY
+
 /* SURF random number generator */
 
 static u32 seed[32];
@@ -43,14 +60,8 @@ static int outleft = 0;
 
 void rand_init()
 {
-  int fd = open(RANDFILE, O_RDONLY);
-  
-  if (fd == -1 ||
-      !read_write(fd, (unsigned char *)&seed, sizeof(seed), 1) ||
-      !read_write(fd, (unsigned char *)&in, sizeof(in), 1))
+  if (getentropy(&seed, sizeof(seed)) + getentropy(&in, sizeof(in)) < 0)
     die(_("failed to seed the random number generator: %s"), NULL, EC_MISC);
-  
-  close(fd);
 }
 
 #define ROTATE(x,b) (((x) << (b)) | ((x) >> (32 - (b))))

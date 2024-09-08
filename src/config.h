@@ -144,6 +144,9 @@ HAVE_LOOP
 HAVE_INOTIFY
    use the Linux inotify facility to efficiently re-read configuration files.
 
+HAVE_GETENTROPY
+   use getentropy() call instead of RANDFILE. It is non-standard by widely available.
+
 NO_ID
    Don't report *.bind CHAOS info to clients, forward such requests upstream instead.
 NO_TFTP
@@ -187,6 +190,7 @@ RESOLVFILE
 #define HAVE_IPSET 
 #define HAVE_LOOP
 #define HAVE_DUMPFILE
+#define HAVE_GETENTROPY
 
 /* Build options which require external libraries.
    
@@ -360,6 +364,10 @@ HAVE_SOCKADDR_SA_LEN
 
 #ifdef NO_DUMPFILE
 #undef HAVE_DUMPFILE
+#endif
+
+#ifdef NO_GETENTROPY
+#undef HAVE_GETENTROPY
 #endif
 
 #if defined (HAVE_LINUX_NETWORK) && !defined(NO_INOTIFY)
