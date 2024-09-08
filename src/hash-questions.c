@@ -36,6 +36,8 @@ static unsigned char *digest;
 
 void hash_questions_init(void)
 {
+  if (ctx)
+    return;
   if (!(hash = hash_find("sha256")))
     die(_("Failed to create SHA-256 hash object"), NULL, EC_MISC);
 

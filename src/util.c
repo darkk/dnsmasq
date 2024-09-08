@@ -19,6 +19,7 @@
 
 
 #include "dnsmasq.h"
+#include <stdbool.h>
 
 #ifdef HAVE_BROKEN_RTC
 #include <sys/times.h>
@@ -53,27 +54,42 @@ static int getentropy_fallback(void *buffer, size_t length)
 
 /* SURF random number generator */
 
-static u32 seed[32];
-static u32 in[12];
+static struct surf_state {
+  u32 seed[32];
+  u32 in[12];
+} surfst;
 static u32 out[8];
 static int outleft = 0;
 
 void rand_init()
 {
-  if (getentropy(&seed, sizeof(seed)) + getentropy(&in, sizeof(in)) < 0)
-    die(_("failed to seed the random number generator: %s"), NULL, EC_MISC);
+  const u32 * const in = surfst.in;
+  const bool reseed = in[0] || in[1] || in[2] || in[3] || in[4] || in[5] ||
+                      in[6] || in[7] || in[8] || in[9] || in[10] || in[11];
+  struct surf_state next;
+  const unsigned bytes = reseed ? sizeof(next.seed) : sizeof(next);
+  if (getentropy(&next, bytes) != 0)
+    {
+      if (!reseed)
+	die(_("failed to seed the random number generator: %s"), NULL, EC_MISC);
+      else
+	my_syslog(LOG_ERR, _("failed to reseed the random number generator: %s"), strerror(errno));
+    }
+  _Static_assert(surfst.in == surfst.seed + countof(surfst.seed)); // No weird alignment gaps.
+  for (unsigned int i = 0; i < bytes / sizeof(next.seed[0]); i++)
+    surfst.seed[i] ^= next.seed[i];
 }
 
 static void rand_atfork(pid_t fpid)
 {
-  u32 next[countof(seed)];
-  for (unsigned int i = 0; i < countof(seed); i++)
-    next[i] = rand32();
+  struct surf_state next;
+  for (unsigned int i = 0; i < countof(next.seed); i++)
+    next.seed[i] = rand32();
   // Child reseeds the state with generated values.  Parent skips those values explicitly as they
   // might be exposed to an external observer and used to guess something about PRNG of the child.
   if (fpid == 0)
-    for (unsigned int i = 0; i < countof(seed); i++)
-      seed[i] ^= next[i];
+    for (unsigned int i = 0; i < countof(next.seed); i++)
+      surfst.seed[i] ^= next.seed[i];
 }
 
 #define ROTATE(x,b) (((x) << (b)) | ((x) >> (32 - (b))))
@@ -81,6 +97,8 @@ static void rand_atfork(pid_t fpid)
 
 static void surf(void)
 {
+  u32 * const in = surfst.in;
+  const u32 * const seed = surfst.seed;
   u32 t[12]; u32 x; u32 sum = 0;
   int r; int i; int loop;
 
@@ -122,6 +140,17 @@ u64 rand64(void)
     surf();
   outleft -= 2;
   return (u64)out[outleft+1] + (((u64)out[outleft]) << 32);
+}
+
+// Reseeding hourly to avoid low-entropy condition right after boot that is somewhat possible
+// in the embedded world. dnsmasq boxes often lack of RTC clocks and/or observe clock jumps
+// due to NTP during boot. So, "hourly" is an approximated as "once in 4096 seconds".
+unsigned int should_reseed(time_t last, time_t now)
+{
+  static u16 offset;
+  if (!offset)
+    offset = 1 + (rand16() & 4095);
+  return ((last + offset) >> 12) != ((now + offset) >> 12);
 }
 
 int rr_on_list(struct rrlist *list, unsigned short rr)

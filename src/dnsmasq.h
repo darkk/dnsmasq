@@ -1455,6 +1455,7 @@ void rand_init(void);
 unsigned short rand16(void);
 u32 rand32(void);
 u64 rand64(void);
+unsigned int should_reseed(time_t last, time_t now);
 int rr_on_list(struct rrlist *list, unsigned short rr);
 int legal_hostname(char *name);
 char *canonicalise(char *in, int *nomem);

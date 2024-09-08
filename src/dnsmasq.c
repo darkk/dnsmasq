@@ -41,7 +41,7 @@ static void tcp_init(void);
 
 int main (int argc, char **argv)
 {
-  time_t now;
+  time_t now = dnsmasq_time(), reseed_hshqs = 0, reseed_rand = 0;
   struct sigaction sigact;
   struct iname *if_tmp;
   int piperead, pipefd[2], err_pipe[2];
@@ -101,7 +101,7 @@ int main (int argc, char **argv)
 
   umask(022); /* known umask, create leases and pid files as 0644 */
 
-  rand_init(); /* Must precede read_opts() */
+  rand_init(), reseed_rand = now; /* Must precede read_opts() */
   
   read_opts(argc, argv, compile_opts);
  
@@ -410,7 +410,7 @@ int main (int argc, char **argv)
     {
       cache_init();
       blockdata_init();
-      hash_questions_init();
+      hash_questions_init(), reseed_hshqs = now;
 
       /* Scale random socket pool by ftabsize, but
 	 limit it based on available fds. */
@@ -1169,6 +1169,10 @@ int main (int argc, char **argv)
 
 #endif
 
+      if (should_reseed(reseed_rand, now))
+	rand_init(), reseed_rand = now;
+      if (daemon->port != 0 && !daemon->frec_list && should_reseed(reseed_hshqs, now))
+	hash_questions_init(), reseed_hshqs = now;
    
       /* must do this just before do_poll(), when we know no
 	 more calls to my_syslog() can occur */
