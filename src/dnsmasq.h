@@ -1450,11 +1450,14 @@ char *ds_digest_name(int digest);
 char *algo_digest_name(int algo);
 char *nsec3_digest_name(int digest);
 
+#include "charand.h"
+
 /* util.c */
 void rand_init(void);
-unsigned short rand16(void);
-u32 rand32(void);
-u64 rand64(void);
+static inline unsigned short rand16(void) { return charand16(); }
+static inline u32 rand32(void) { return charand32(); }
+static inline u64 rand64(void) { return charand64(); }
+static inline uintptr_t randptr(void) { return charandptr(); }
 unsigned int should_reseed(time_t last, time_t now);
 int rr_on_list(struct rrlist *list, unsigned short rr);
 int legal_hostname(char *name);

@@ -14,12 +14,8 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-/* The SURF random number generator was taken from djbdns-1.05, by 
-   Daniel J Bernstein, which is public domain. */
-
 
 #include "dnsmasq.h"
-#include <stdbool.h>
 
 #ifdef HAVE_BROKEN_RTC
 #include <sys/times.h>
@@ -35,111 +31,14 @@
 #include <sys/utsname.h>
 #endif
 
-#ifndef HAVE_GETENTROPY
-// Non-standard libc getentropy() might use getrandom() avoiding filesystem access, that's great
-// for jails and chroots.  However, a fallback implemetation is required for older systems that have
-// no getentropy() in libc.  Also, getentropy() might block if the kernel has not initialized random
-// pool yet.  However, dnsmasq is never started that early during the OpenWRT boot process (at least).
-#define getentropy(a, b) getentropy_fallback(a, b)
-static int getentropy_fallback(void *buffer, size_t length)
-{
-  const int fd = open(RANDFILE, O_RDONLY);
-  if (fd == -1)
-    return -1;
-  const int okay = read_write(fd, buffer, length, 1);
-  close(fd);
-  return okay ? 0 : -1;
-}
-#endif // HAVE_GETENTROPY
-
-/* SURF random number generator */
-
-static struct surf_state {
-  u32 seed[32];
-  u32 in[12];
-} surfst;
-static u32 out[8];
-static int outleft = 0;
-
 void rand_init()
 {
-  const u32 * const in = surfst.in;
-  const bool reseed = in[0] || in[1] || in[2] || in[3] || in[4] || in[5] ||
-                      in[6] || in[7] || in[8] || in[9] || in[10] || in[11];
-  struct surf_state next;
-  const unsigned bytes = reseed ? sizeof(next.seed) : sizeof(next);
-  if (getentropy(&next, bytes) != 0)
-    {
-      if (!reseed)
-	die(_("failed to seed the random number generator: %s"), NULL, EC_MISC);
-      else
-	my_syslog(LOG_ERR, _("failed to reseed the random number generator: %s"), strerror(errno));
-    }
-  _Static_assert(surfst.in == surfst.seed + countof(surfst.seed)); // No weird alignment gaps.
-  for (unsigned int i = 0; i < bytes / sizeof(next.seed[0]); i++)
-    surfst.seed[i] ^= next.seed[i];
-}
-
-static void rand_atfork(pid_t fpid)
-{
-  struct surf_state next;
-  for (unsigned int i = 0; i < countof(next.seed); i++)
-    next.seed[i] = rand32();
-  // Child reseeds the state with generated values.  Parent skips those values explicitly as they
-  // might be exposed to an external observer and used to guess something about PRNG of the child.
-  if (fpid == 0)
-    for (unsigned int i = 0; i < countof(next.seed); i++)
-      surfst.seed[i] ^= next.seed[i];
-}
-
-#define ROTATE(x,b) (((x) << (b)) | ((x) >> (32 - (b))))
-#define MUSH(i,b) x = t[i] += (((x ^ seed[i]) + sum) ^ ROTATE(x,b));
-
-static void surf(void)
-{
-  u32 * const in = surfst.in;
-  const u32 * const seed = surfst.seed;
-  u32 t[12]; u32 x; u32 sum = 0;
-  int r; int i; int loop;
-
-  // Overflowing 32-bit counter is trivial, overflowing 64-bit counter takes 146 years
-  // at 4 GHz rate. So let counter be 64-bit as 128-bit counter is excessive.
-  in[0]++; in[1] += !in[0];
-
-  for (i = 0;i < 12;++i) t[i] = in[i] ^ seed[12 + i];
-  for (i = 0;i < 8;++i) out[i] = seed[24 + i];
-  x = t[11];
-  for (loop = 0;loop < 2;++loop) {
-    for (r = 0;r < 16;++r) {
-      sum += 0x9e3779b9;
-      MUSH(0,5) MUSH(1,7) MUSH(2,9) MUSH(3,13)
-      MUSH(4,5) MUSH(5,7) MUSH(6,9) MUSH(7,13)
-      MUSH(8,5) MUSH(9,7) MUSH(10,9) MUSH(11,13)
-    }
-    for (i = 0;i < 8;++i) out[i] ^= t[i + 4];
-  }
-
-  outleft = 8;
-}
-
-unsigned short rand16(void)
-{
-  return (unsigned short)rand32();
-}
-
-u32 rand32(void)
-{
-  if (!outleft)
-    surf();
-  return out[--outleft];
-}
-
-u64 rand64(void)
-{
-  if (outleft < 2)
-    surf();
-  outleft -= 2;
-  return (u64)out[outleft+1] + (((u64)out[outleft]) << 32);
+  if (charand_init() == 0)
+    return;
+  else if (charand_isinit())
+    my_syslog(LOG_ERR, _("failed to reseed the random number generator: %s"), strerror(errno));
+  else
+    die(_("failed to seed the random number generator: %s"), NULL, EC_MISC);
 }
 
 // Reseeding hourly to avoid low-entropy condition right after boot that is somewhat possible
@@ -379,8 +278,8 @@ void safe_pipe(int *fd, int read_noblock)
 pid_t my_fork()
 {
   const pid_t fpid = fork();
-  if (fpid != -1)
-    rand_atfork(fpid);
+  if (fpid == 0)
+    charand_atfork_child();
   return fpid;
 }
 
