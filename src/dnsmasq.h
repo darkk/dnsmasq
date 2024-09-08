@@ -1462,6 +1462,7 @@ unsigned char *do_rfc1035_name(unsigned char *p, char *sval, char *limit);
 void *safe_malloc(size_t size);
 void safe_strncpy(char *dest, const char *src, size_t size);
 void safe_pipe(int *fd, int read_noblock);
+pid_t my_fork(void);
 void *whine_malloc(size_t size);
 void *whine_realloc(void *ptr, size_t size);
 int sa_len(union mysockaddr *addr);

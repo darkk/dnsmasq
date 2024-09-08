@@ -64,6 +64,18 @@ void rand_init()
     die(_("failed to seed the random number generator: %s"), NULL, EC_MISC);
 }
 
+static void rand_atfork(pid_t fpid)
+{
+  u32 next[countof(seed)];
+  for (unsigned int i = 0; i < countof(seed); i++)
+    next[i] = rand32();
+  // Child reseeds the state with generated values.  Parent skips those values explicitly as they
+  // might be exposed to an external observer and used to guess something about PRNG of the child.
+  if (fpid == 0)
+    for (unsigned int i = 0; i < countof(seed); i++)
+      seed[i] ^= next[i];
+}
+
 #define ROTATE(x,b) (((x) << (b)) | ((x) >> (32 - (b))))
 #define MUSH(i,b) x = t[i] += (((x ^ seed[i]) + sum) ^ ROTATE(x,b));
 
@@ -332,6 +344,15 @@ void safe_pipe(int *fd, int read_noblock)
       !fix_fd(fd[1]) ||
       (read_noblock && !fix_fd(fd[0])))
     die(_("cannot create pipe: %s"), NULL, EC_MISC);
+}
+
+// pthread_atfork() might be a better way to wrap fork(), but it requires -pthread besides libc.
+pid_t my_fork()
+{
+  const pid_t fpid = fork();
+  if (fpid != -1)
+    rand_atfork(fpid);
+  return fpid;
 }
 
 void *whine_malloc(size_t size)

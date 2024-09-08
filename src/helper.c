@@ -85,7 +85,7 @@ int create_helper(int event_fd, int err_fd, uid_t uid, gid_t gid, long max_fd)
   
   /* create the pipe through which the main program sends us commands,
      then fork our process. */
-  if (pipe(pipefd) == -1 || !fix_fd(pipefd[1]) || (pid = fork()) == -1)
+  if (pipe(pipefd) == -1 || !fix_fd(pipefd[1]) || (pid = my_fork()) == -1)
     {
       send_event(err_fd, EVENT_PIPE_ERR, errno, NULL);
       _exit(0);
@@ -506,7 +506,7 @@ int create_helper(int event_fd, int err_fd, uid_t uid, gid_t gid, long max_fd)
 	continue;
       
       /* possible fork errors are all temporary resource problems */
-      while ((pid = fork()) == -1 && (errno == EAGAIN || errno == ENOMEM))
+      while ((pid = my_fork()) == -1 && (errno == EAGAIN || errno == ENOMEM))
 	sleep(2);
 
       if (pid == -1)

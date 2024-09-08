@@ -607,7 +607,7 @@ int main (int argc, char **argv)
 	     When startup is complete we close this and the process terminates. */
 	  safe_pipe(err_pipe, 0);
 	  
-	  if ((pid = fork()) == -1)
+	  if ((pid = my_fork()) == -1)
 	    /* fd == -1 since we've not forked, never returns. */
 	    send_event(-1, EVENT_FORK_ERR, errno, NULL);
 	   
@@ -632,7 +632,7 @@ int main (int argc, char **argv)
 	  
 	  setsid();
 	 
-	  if ((pid = fork()) == -1)
+	  if ((pid = my_fork()) == -1)
 	    send_event(err_pipe[1], EVENT_FORK_ERR, errno, NULL);
 	 
 	  if (pid != 0)
@@ -1955,7 +1955,7 @@ static void check_dns_listeners(time_t now)
 	      shutdown(confd, SHUT_RDWR);
 	      close(confd);
 	    }
-	  else if (!option_bool(OPT_DEBUG) && pipe(pipefd) == 0 && (p = fork()) != 0)
+	  else if (!option_bool(OPT_DEBUG) && pipe(pipefd) == 0 && (p = my_fork()) != 0)
 	    {
 	      close(pipefd[1]); /* parent needs read pipe end. */
 	      if (p == -1)
